@@ -1,0 +1,674 @@
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#include <GL/glut.h>
+#include <GL/glu.h>
+#include <cmath>
+#include <cstdlib>
+
+// ===================== World Range (Ortho 2D) =====================
+const float XMIN = -12.0f, XMAX = 38.0f;
+const float YMIN = -19.0f, YMAX = 14.0f;
+const float PI   = 3.14159265358979323846f;
+
+// ===================== Animation Globals =====================
+float moveC  = 0.0f;      // clouds x-shift
+float moveB1 = 0.0f;      // boat x-shift
+float speedBoat1 = 0.02f; // boat speed
+
+bool  isNight = false;
+
+float kitePhase  = 0.0f;  // kite sway phase
+
+bool  busRun     = true;
+float busS       = 0.0f;  // 0..1 along road
+float busSpeed   = 0.0038f;
+
+float waterPhase = 0.0f;  // water wave phase
+
+// ===================== Bus road endpoints =====================
+struct P2 { float x, y; };
+P2 busA = { 4.6f,  -5.8f };
+P2 busB = { 38.0f, -5.8f };
+
+// ===================== Helper Functions (NO #define macros) =====================
+static float clampf(float v, float lo, float hi)
+{
+    if(v < lo) return lo;
+    if(v > hi) return hi;
+    return v;
+}
+
+// sea top edge: (-12,-7) to (38,-10)
+static float seaTopY(float x)
+{
+    return -7.0f - 0.06f * (x + 12.0f);
+}
+
+// filled circle
+static void drawCircle2D(float cx, float cy, float r, int seg)
+{
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(cx, cy);
+    for(int i=0; i<=seg; ++i){
+        float a = 2.0f * PI * (float)i / (float)seg;
+        glVertex2f(cx + r*(float)cos(a), cy + r*(float)sin(a));
+    }
+    glEnd();
+}
+
+// cloud cluster
+static void drawCloudCluster(float baseX, float baseY, float r,
+                             unsigned char cR, unsigned char cG, unsigned char cB)
+{
+    glPushMatrix();
+
+    glColor3ub(cR,cG,cB);
+    drawCircle2D(baseX - 0.7f,  baseY,        r,       22);
+    drawCircle2D(baseX,         baseY + 0.2f, r*1.15f, 22);
+    drawCircle2D(baseX + 0.7f,  baseY,        r,       22);
+    drawCircle2D(baseX - 0.2f,  baseY + 0.45f, r*0.9f, 22);
+    drawCircle2D(baseX + 0.25f, baseY + 0.45f, r*0.9f, 22);
+
+    glPopMatrix();
+}
+
+// kite (sway)
+static void drawKiteSway(float cx, float cy, float sx, float sy,
+                         unsigned char R, unsigned char G, unsigned char B,
+                         float tailX1, float tailY1, float tailX2, float tailY2,
+                         unsigned char bowR, unsigned char bowG, unsigned char bowB,
+                         float phaseOffset)
+{
+    glPushMatrix();
+
+    float sway = (float)sin(kitePhase + phaseOffset) * 6.0f;
+
+    glTranslatef(cx, cy, 0.0f);
+    glRotatef(sway, 0,0,1);
+
+    // kite body
+    glBegin(GL_TRIANGLES);
+    glColor3ub(R,G,B);
+    glVertex2f(0.0f,  sy);
+    glVertex2f( sx,   0.0f);
+    glVertex2f(0.0f, -sy);
+
+    glVertex2f(0.0f, -sy);
+    glVertex2f(-sx,   0.0f);
+    glVertex2f(0.0f,  sy);
+    glEnd();
+
+    // cross lines
+    glLineWidth(2.0f);
+    glColor3ub(20,20,20);
+    glBegin(GL_LINES);
+    glVertex2f(-sx*0.9f, 0.0f); glVertex2f( sx*0.9f, 0.0f);
+    glVertex2f(0.0f, sy*0.95f); glVertex2f(0.0f, -sy*0.95f);
+    glEnd();
+
+    // string
+    glLineWidth(1.5f);
+    glColor3ub(20,20,20);
+    glBegin(GL_LINE_STRIP);
+    glVertex2f(0.0f, -sy);
+    glVertex2f(tailX1 - cx, tailY1 - cy);
+    glVertex2f(tailX2 - cx, tailY2 - cy);
+    glEnd();
+
+    // bow
+    glBegin(GL_TRIANGLES);
+    glColor3ub(bowR, bowG, bowB);
+    {
+        float bx = (tailX1 - cx), by = (tailY1 - cy);
+        glVertex2f(bx, by);
+        glVertex2f(bx - 0.15f, by - 0.20f);
+        glVertex2f(bx + 0.15f, by - 0.20f);
+    }
+    glEnd();
+
+    glPopMatrix();
+}
+
+// stall
+static void drawStall(float xL, float xR, unsigned char rr, unsigned char gg, unsigned char bb)
+{
+    glPushMatrix();
+
+    glBegin(GL_QUADS);
+    glColor3ub(240,238,220); glVertex2f(xL, 0.10f);
+    glColor3ub(240,238,220); glVertex2f(xR, 0.10f);
+    glColor3ub(232,220,200); glVertex2f(xR, 3.40f);
+    glColor3ub(232,220,200); glVertex2f(xL, 3.40f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3ub(120,85,40);
+    glVertex2f(xL, 0.10f); glVertex2f(xL+0.12f, 0.10f);
+    glVertex2f(xL+0.12f, 3.70f); glVertex2f(xL, 3.70f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3ub(120,85,40);
+    glVertex2f(xR-0.12f, 0.10f); glVertex2f(xR, 0.10f);
+    glVertex2f(xR, 3.70f); glVertex2f(xR-0.12f, 3.70f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3ub(210,160,90);
+    glVertex2f(xL+0.18f, 1.20f);
+    glVertex2f(xR-0.18f, 1.20f);
+    glColor3ub(170,120,65);
+    glVertex2f(xR-0.18f, 1.90f);
+    glVertex2f(xL+0.18f, 1.90f);
+    glEnd();
+
+    float cx = (xL+xR)*0.5f;
+    glBegin(GL_TRIANGLES);
+    glColor3ub(rr,gg,bb);
+    glVertex2f(xL, 3.70f); glVertex2f(cx, 4.40f); glVertex2f(cx, 3.70f);
+    glEnd();
+
+    glBegin(GL_TRIANGLES);
+    glColor3ub(rr,gg,bb);
+    glVertex2f(cx, 3.70f); glVertex2f(xR, 3.70f); glVertex2f(cx, 4.40f);
+    glEnd();
+
+    glLineWidth(4.0f);
+    glColor3ub(120,85,40);
+    glBegin(GL_LINES);
+    glVertex2f(xL, 3.70f);
+    glVertex2f(xR, 3.70f);
+    glEnd();
+
+    glPopMatrix();
+}
+
+// boatman
+static void drawBoatman(float x, float y, float s)
+{
+    glPushMatrix();
+
+    // head
+    glColor3ub(245, 222, 179);
+    drawCircle2D(x, y + 0.55f*s, 0.18f*s, 18);
+
+    // body
+    glColor3ub(40, 160, 90);
+    glBegin(GL_QUADS);
+    glVertex2f(x - 0.18f*s, y + 0.40f*s);
+    glVertex2f(x + 0.18f*s, y + 0.40f*s);
+    glVertex2f(x + 0.18f*s, y - 0.05f*s);
+    glVertex2f(x - 0.18f*s, y - 0.05f*s);
+    glEnd();
+
+    // legs
+    glColor3ub(200,200,200);
+    glLineWidth(3.0f);
+    glBegin(GL_LINES);
+    glVertex2f(x - 0.05f*s, y - 0.05f*s); glVertex2f(x - 0.22f*s, y - 0.25f*s);
+    glVertex2f(x + 0.05f*s, y - 0.05f*s); glVertex2f(x + 0.22f*s, y - 0.25f*s);
+    glEnd();
+
+    // oar
+    glColor3ub(120,85,40);
+    glLineWidth(4.0f);
+    glBegin(GL_LINES);
+    glVertex2f(x + 0.10f*s, y + 0.15f*s);
+    glVertex2f(x + 0.95f*s, y - 0.55f*s);
+    glEnd();
+
+    glLineWidth(6.0f);
+    glBegin(GL_LINES);
+    glVertex2f(x + 0.95f*s, y - 0.55f*s);
+    glVertex2f(x + 1.10f*s, y - 0.70f*s);
+    glEnd();
+
+    glPopMatrix();
+}
+
+// water wave bands only (no oval/circle ripples)
+static void drawWaterBands()
+{
+    glPushMatrix();
+
+    unsigned char wr = isNight ? 160 : 235;
+    unsigned char wg = isNight ? 200 : 250;
+    unsigned char wb = 255;
+
+    glColor3ub(wr,wg,wb);
+    glLineWidth(2.0f);
+
+    float x0 = XMIN, x1 = XMAX;
+    float bottom = YMIN;
+
+    for(int band=0; band<11; ++band){
+        float base  = -18.2f + band*0.95f;
+        float amp   = 0.10f + 0.02f*band;
+        float freq  = 0.55f;
+        float phase = waterPhase*(1.0f + 0.04f*band) + band*1.2f;
+
+        glBegin(GL_LINE_STRIP);
+        for(float x=x0; x<=x1; x+=0.55f){
+            float top = seaTopY(x) - 0.25f;
+            float y   = base + amp*(float)sin(freq*x + phase);
+
+            if(y > top) y = top;
+            if(y < bottom + 0.25f) y = bottom + 0.25f;
+
+            glVertex2f(x, y);
+        }
+        glEnd();
+    }
+
+    glPopMatrix();
+}
+
+// bus road
+static void drawBusRoad()
+{
+    glPushMatrix();
+
+    float w = 1.6f;
+    glColor3ub(85,85,90);
+    glBegin(GL_QUADS);
+    glVertex2f(busA.x, busA.y + w*0.5f);
+    glVertex2f(busB.x, busB.y + w*0.5f);
+    glVertex2f(busB.x, busB.y - w*0.5f);
+    glVertex2f(busA.x, busA.y - w*0.5f);
+    glEnd();
+
+    glLineWidth(3.0f);
+    glColor3ub(240,240,240);
+    glBegin(GL_LINES);
+    glVertex2f(busA.x, busA.y);
+    glVertex2f(busB.x, busB.y);
+    glEnd();
+
+    glPopMatrix();
+}
+
+// bus
+static void drawBus()
+{
+    glPushMatrix();
+
+    float t = busS;
+    if(t > 1.0f) t -= 1.0f;
+
+    float x = busA.x + (busB.x - busA.x) * t;
+    float y = busA.y;
+
+    glTranslatef(x, y, 0.0f);
+
+    float L = 3.6f;
+    float H = 1.35f;
+
+    glBegin(GL_QUADS);
+    glColor3ub(240,60,60);
+    glVertex2f(-L*0.5f, 0.00f);
+    glVertex2f( L*0.5f, 0.00f);
+    glColor3ub(200,40,40);
+    glVertex2f( L*0.5f, H*0.75f);
+    glVertex2f(-L*0.5f, H*0.75f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3ub(255,230,230);
+    glVertex2f(-L*0.5f, H*0.75f);
+    glVertex2f( L*0.5f, H*0.75f);
+    glVertex2f( L*0.5f, H*0.92f);
+    glVertex2f(-L*0.5f, H*0.92f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3ub(180,220,255);
+    glVertex2f(-L*0.38f, H*0.38f);
+    glVertex2f(-L*0.10f, H*0.38f);
+    glVertex2f(-L*0.10f, H*0.66f);
+    glVertex2f(-L*0.38f, H*0.66f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3ub(180,220,255);
+    glVertex2f( L*0.00f, H*0.38f);
+    glVertex2f( L*0.28f, H*0.38f);
+    glVertex2f( L*0.28f, H*0.66f);
+    glVertex2f( L*0.00f, H*0.66f);
+    glEnd();
+
+    glColor3ub(20,20,20);
+    drawCircle2D(-L*0.28f, -0.10f, 0.22f, 20);
+    drawCircle2D( L*0.28f, -0.10f, 0.22f, 20);
+
+    glColor3ub(200,200,200);
+    drawCircle2D(-L*0.28f, -0.10f, 0.09f, 18);
+    drawCircle2D( L*0.28f, -0.10f, 0.09f, 18);
+
+    if (isNight) {
+        glColor3ub(255, 240, 180);
+        glBegin(GL_TRIANGLES);
+        glVertex2f(L*0.50f, 0.25f);
+        glVertex2f(L*0.50f + 1.00f, 0.40f);
+        glVertex2f(L*0.50f, 0.60f);
+        glEnd();
+    }
+
+    glPopMatrix();
+}
+
+// boat (body only)
+static void drawBoat()
+{
+    glPushMatrix();
+
+    // boat upper
+    glBegin(GL_QUADS);
+    glColor3ub(139,69,19);
+    glVertex2f(1.0f, -14.0f);
+    glVertex2f(1.50f, -13.0f);
+    glVertex2f(-2.0f, -13.0f);
+    glVertex2f(-3.0f, -14.0f);
+    glEnd();
+
+    // boat bottom
+    glBegin(GL_QUADS);
+    glColor3ub(0,0,0);
+    glVertex2f(2.0f, -14.5f);
+    glVertex2f(2.0f, -14.0f);
+    glVertex2f(-3.0f, -14.0f);
+    glVertex2f(-3.0f, -14.5f);
+    glEnd();
+
+    // tips
+    glBegin(GL_TRIANGLES);
+    glColor3ub(0,0,0);
+    glVertex2f(-3.0f, -14.5f);
+    glVertex2f(-3.0f, -14.0f);
+    glVertex2f(-4.5f, -13.7f);
+    glEnd();
+
+    glBegin(GL_TRIANGLES);
+    glColor3ub(0,0,0);
+    glVertex2f(2.0f, -14.5f);
+    glVertex2f(3.5f, -13.7f);
+    glVertex2f(2.0f, -14.0f);
+    glEnd();
+
+    glPopMatrix();
+}
+
+// middle axes (for coordinate work)
+static void drawMiddleAxes()
+{
+    glPushMatrix();
+
+    float midX = (XMIN + XMAX) * 0.5f;
+    float midY = (YMIN + YMAX) * 0.5f;
+
+    if(!isNight) glColor3ub(255,255,255);
+    else         glColor3ub(220,220,220);
+
+    glLineWidth(2.0f);
+
+    // Horizontal axis
+    glBegin(GL_LINES);
+        glVertex2f(XMIN, midY);
+        glVertex2f(XMAX, midY);
+    glEnd();
+
+    // Vertical axis
+    glBegin(GL_LINES);
+        glVertex2f(midX, YMIN);
+        glVertex2f(midX, YMAX);
+    glEnd();
+
+    // middle point
+    glPointSize(6.0f);
+    glBegin(GL_POINTS);
+        glVertex2f(midX, midY);
+    glEnd();
+
+    glPopMatrix();
+}
+
+static void initGL()
+{
+    glClearColor(1,1,1,1);
+}
+
+// ===================== GLUT callback: display =====================
+static void display()
+{
+    glClear(GL_COLOR_BUFFER_BIT);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    // 1) SKY
+    glPushMatrix();
+    glBegin(GL_POLYGON);
+    if (!isNight) glColor3ub(115,160,228);
+    else          glColor3ub(15,20,60);
+    glVertex2f(XMAX, 3.0f);
+    glVertex2f(XMAX, YMAX);
+    glVertex2f(XMIN, YMAX);
+    glVertex2f(XMIN, 3.0f);
+    glEnd();
+    glPopMatrix();
+
+    // 2) SUN / MOON
+    glPushMatrix();
+    if (!isNight) {
+        glColor3ub(255,80,60);
+        drawCircle2D(30.0f, 7.0f, 1.0f, 40);
+    } else {
+        glColor3ub(240,240,240);
+        drawCircle2D(30.0f, 9.0f, 0.9f, 40);
+        glColor3ub(15,20,60);
+        drawCircle2D(30.35f, 9.15f, 0.75f, 40);
+    }
+    glPopMatrix();
+
+    // 3) CLOUDS (move together)
+    unsigned char cR = isNight ? 210 : 255;
+    unsigned char cG = isNight ? 210 : 255;
+    unsigned char cB = isNight ? 210 : 255;
+
+    glPushMatrix();
+    glTranslatef(moveC, 0.0f, 0.0f);
+    drawCloudCluster(1.2f,  6.5f, 0.6f,  cR,cG,cB);
+    drawCloudCluster(15.5f, 8.6f, 0.65f, cR,cG,cB);
+    drawCloudCluster(22.8f, 7.6f, 0.62f, cR,cG,cB);
+    glPopMatrix();
+
+    // 4) KITES
+    drawKiteSway(36.2f, 10.8f, 0.70f, 0.90f, 220,40,50,
+                 37.3f,9.0f,  37.8f,8.0f,  255,220,80,  0.0f);
+
+    drawKiteSway(34.8f, 11.6f, 0.60f, 0.78f, 40,170,75,
+                 36.0f,10.2f, 36.6f,9.6f, 255,150,70,  1.4f);
+
+    drawKiteSway(36.9f,  9.2f, 0.55f, 0.70f, 60,120,240,
+                 37.7f,8.3f,  38.1f,7.6f, 255,210,120, 2.6f);
+
+    // 5) SEA
+    glPushMatrix();
+    glBegin(GL_POLYGON);
+    if (!isNight) glColor3ub(65,105,225);
+    else          glColor3ub(20,50,110);
+    glVertex2f(38.0f,-19.0f);
+    glVertex2f(38.0f,-10.0f);
+    glVertex2f(-12.0f,-7.0f);
+    glVertex2f(-12.0f,-19.0f);
+    glEnd();
+    glPopMatrix();
+
+    // 6) WATER BANDS (no oval marks)
+    drawWaterBands();
+
+    // 7) GROUND
+    glPushMatrix();
+    glBegin(GL_POLYGON);
+    if (!isNight) glColor3ub(25,128,0);
+    else          glColor3ub(10,70,10);
+    glVertex2f(1.0f, -8.0f);
+    glVertex2f(38.0f,-12.0f);
+    glVertex2f(38.0f, 3.0f);
+    glVertex2f(-12.0f,3.0f);
+    glVertex2f(-12.0f,-11.0f);
+    glEnd();
+    glPopMatrix();
+
+    // 8) VERTICAL ROAD
+    glPushMatrix();
+    glBegin(GL_POLYGON);
+    glColor3ub(72,72,76);
+    glVertex2f(6.0f,-8.6f);
+    glVertex2f(6.0f,3.0f);
+    glVertex2f(5.2f,3.0f);
+    glVertex2f(2.0f,-8.2f);
+    glEnd();
+
+    glBegin(GL_POLYGON);
+    glColor3ub(255,255,255);
+    glVertex2f(4.2f,-8.5f);
+    glVertex2f(5.6f,3.0f);
+    glVertex2f(5.5f,3.0f);
+    glVertex2f(4.0f,-8.4f);
+    glEnd();
+    glPopMatrix();
+
+    // 9) BUS ROAD + 10) BUS
+    drawBusRoad();
+    drawBus();
+
+    // 11) STALLS
+    drawStall(17.20f, 19.00f, 210,35,45);
+    drawStall(19.25f, 21.05f, 40,170,75);
+    drawStall(21.30f, 23.10f, 240,120,30);
+    drawStall(23.35f, 24.95f, 60,120,240);
+
+    // 12) BOAT + BOATMAN (moving)
+    glPushMatrix();
+    glTranslatef(moveB1, 0.0f, 0.0f);
+    drawBoat();
+    drawBoatman(-0.9f, -13.25f, 1.2f);
+    glPopMatrix();
+
+    // 13) MIDDLE AXES
+    drawMiddleAxes();
+
+    glutSwapBuffers();
+}
+
+// ===================== GLUT callback: key =====================
+static void key(unsigned char k, int, int)
+{
+    switch(k)
+    {
+        case 27:
+        case 'q':
+            exit(0);
+
+        case 'n': isNight = true;  break;
+        case 'd': isNight = false; break;
+
+        // boat speed
+        case 's': speedBoat1 = 0.0f;  break;
+        case 'r': speedBoat1 = 0.02f; break;
+        case '+': speedBoat1 += 0.02f; break;
+        case '-': speedBoat1 -= 0.02f; break;
+
+        // bus control
+        case 'b': busRun = true;  break;
+        case 'p': busRun = false; break;
+        case 'i': busSpeed += 0.0015f; break;
+        case 'k': busSpeed -= 0.0015f; break;
+    }
+
+    speedBoat1 = clampf(speedBoat1, 0.0f, 0.50f);
+    busSpeed   = clampf(busSpeed,   0.0f, 0.03f);
+
+    glutPostRedisplay();
+}
+
+// ===================== TIMER function =====================
+static void update(int)
+{
+    // clouds
+    moveC += 0.15f;
+    if(moveC > 36.0f) moveC = -38.0f;
+
+    // boat
+    moveB1 += speedBoat1;
+    if(moveB1 > 38.0f) moveB1 = -38.0f;
+
+    // phases
+    kitePhase  += 0.06f;
+    waterPhase += 0.12f;
+
+    // bus
+    if(busRun){
+        busS += busSpeed;
+        if(busS > 1.02f) busS = 0.0f;
+    }
+
+    glutPostRedisplay();
+    glutTimerFunc(16, update, 0);
+}
+
+// ===================== reshape (your style, but world-range aware) =====================
+static void reshape(GLsizei width, GLsizei height)
+{
+    if (height == 0) height = 1;
+    GLfloat aspect = (GLfloat)width / (GLfloat)height;
+
+    glViewport(0, 0, width, height);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+
+    // keep the full world visible, add extra margin depending on window aspect
+    float baseW = (XMAX - XMIN);
+    float baseH = (YMAX - YMIN);
+    float baseAspect = baseW / baseH;
+
+    float midX = (XMIN + XMAX) * 0.5f;
+    float midY = (YMIN + YMAX) * 0.5f;
+
+    float halfW = baseW * 0.5f;
+    float halfH = baseH * 0.5f;
+
+    if (aspect >= baseAspect) {
+        // window is wider -> expand X
+        float newHalfW = halfH * aspect;
+        gluOrtho2D(midX - newHalfW, midX + newHalfW, midY - halfH, midY + halfH);
+    } else {
+        // window is taller -> expand Y
+        float newHalfH = halfW / aspect;
+        gluOrtho2D(midX - halfW, midX + halfW, midY - newHalfH, midY + newHalfH);
+    }
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
+// ===================== main =====================
+int main(int argc, char** argv)
+{
+    glutInit(&argc, argv);
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB);
+    glutInitWindowSize(1300, 700);
+    glutInitWindowPosition(50, 50);
+    glutCreateWindow("Village Scenery - Functions + Timer + PushPop + Axes");
+
+    initGL();
+
+    glutDisplayFunc(display);
+    glutReshapeFunc(reshape);
+    glutKeyboardFunc(key);
+
+    glutTimerFunc(0, update, 0);
+    glutMainLoop();
+    return 0;
+}
