@@ -1,0 +1,305 @@
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include <GL/glut.h>
+#include <GL/glu.h>
+#include <cmath>
+
+float cloudPosition = -14.0f;
+float birdX = -12.0f;
+float birdY = 6.0f;
+
+float boatX = -6.0f;
+float busT = 0.0f;
+
+void initGL() {
+    glClearColor(1, 1, 1, 1);
+}
+
+void drawCircle(float cx, float cy, float r, int seg) {
+    float PI = 3.1416f;
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(cx, cy);
+    for (int i = 0; i <= seg; i++) {
+        float a = 2.0f * PI * (float)i / (float)seg;
+        glVertex2f(cx + r * cosf(a), cy + r * sinf(a));
+    }
+    glEnd();
+}
+
+void drawTriangle(float x1, float y1, float x2, float y2, float x3, float y3) {
+    glBegin(GL_TRIANGLES);
+    glVertex2f(x1, y1);
+    glVertex2f(x2, y2);
+    glVertex2f(x3, y3);
+    glEnd();
+}
+
+void drawStall(float xL, float xR, float rr, float gg, float bb) {
+    glBegin(GL_QUADS);
+    glColor3f(0.94f, 0.93f, 0.86f);
+    glVertex2f(xL, 0.10f);
+    glVertex2f(xR, 0.10f);
+    glColor3f(0.91f, 0.86f, 0.78f);
+    glVertex2f(xR, 3.40f);
+    glVertex2f(xL, 3.40f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3f(0.47f, 0.33f, 0.16f);
+    glVertex2f(xL, 0.10f);
+    glVertex2f(xL + 0.12f, 0.10f);
+    glVertex2f(xL + 0.12f, 3.70f);
+    glVertex2f(xL, 3.70f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3f(0.47f, 0.33f, 0.16f);
+    glVertex2f(xR - 0.12f, 0.10f);
+    glVertex2f(xR, 0.10f);
+    glVertex2f(xR, 3.70f);
+    glVertex2f(xR - 0.12f, 3.70f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3f(0.82f, 0.63f, 0.35f);
+    glVertex2f(xL + 0.18f, 1.20f);
+    glVertex2f(xR - 0.18f, 1.20f);
+    glColor3f(0.67f, 0.47f, 0.25f);
+    glVertex2f(xR - 0.18f, 1.90f);
+    glVertex2f(xL + 0.18f, 1.90f);
+    glEnd();
+
+    float cx = (xL + xR) * 0.5f;
+    glBegin(GL_TRIANGLES);
+    glColor3f(rr, gg, bb);
+    glVertex2f(xL, 3.70f);
+    glVertex2f(cx, 4.40f);
+    glVertex2f(cx, 3.70f);
+    glVertex2f(cx, 3.70f);
+    glVertex2f(xR, 3.70f);
+    glVertex2f(cx, 4.40f);
+    glEnd();
+
+    glLineWidth(4.0f);
+    glColor3f(0.47f, 0.33f, 0.16f);
+    glBegin(GL_LINES);
+    glVertex2f(xL, 3.70f);
+    glVertex2f(xR, 3.70f);
+    glEnd();
+}
+
+void drawBoat() {
+    glBegin(GL_QUADS);
+    glColor3f(0.55f, 0.27f, 0.07f);
+    glVertex2f(1.0f, -14.0f);
+    glVertex2f(1.50f, -13.0f);
+    glVertex2f(-2.0f, -13.0f);
+    glVertex2f(-3.0f, -14.0f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3f(0, 0, 0);
+    glVertex2f(2.0f, -14.5f);
+    glVertex2f(2.0f, -14.0f);
+    glVertex2f(-3.0f, -14.0f);
+    glVertex2f(-3.0f, -14.5f);
+    glEnd();
+
+    glBegin(GL_TRIANGLES);
+    glColor3f(0, 0, 0);
+    glVertex2f(-3.0f, -14.5f);
+    glVertex2f(-3.0f, -14.0f);
+    glVertex2f(-4.5f, -13.7f);
+    glEnd();
+
+    glBegin(GL_TRIANGLES);
+    glColor3f(0, 0, 0);
+    glVertex2f(2.0f, -14.5f);
+    glVertex2f(3.5f, -13.7f);
+    glVertex2f(2.0f, -14.0f);
+    glEnd();
+}
+
+void drawBusRoad() {
+    float ax = 4.6f, ay = -5.8f;
+    float bx = 38.0f, by = -5.8f;
+
+    glColor3f(0.33f, 0.33f, 0.35f);
+    glBegin(GL_QUADS);
+    glVertex2f(ax, ay + 0.8f);
+    glVertex2f(bx, by + 0.8f);
+    glVertex2f(bx, by - 0.8f);
+    glVertex2f(ax, ay - 0.8f);
+    glEnd();
+
+    glLineWidth(3.0f);
+    glColor3f(0.95f, 0.95f, 0.95f);
+    glBegin(GL_LINES);
+    glVertex2f(ax, ay);
+    glVertex2f(bx, by);
+    glEnd();
+}
+
+void drawBus() {
+    float ax = 4.6f, ay = -5.8f;
+    float bx = 38.0f, by = -5.8f;
+
+    float t = busT;
+    if (t > 1.0f) t -= 1.0f;
+
+    float x = ax + (bx - ax) * t;
+    float y = ay;
+
+    glPushMatrix();
+    glTranslatef(x, y, 0.0f);
+
+    float L = 3.6f;
+    float H = 1.35f;
+
+    glBegin(GL_QUADS);
+    glColor3f(0.94f, 0.24f, 0.24f);
+    glVertex2f(-L * 0.5f, 0.00f);
+    glVertex2f( L * 0.5f, 0.00f);
+    glColor3f(0.78f, 0.16f, 0.16f);
+    glVertex2f( L * 0.5f, H * 0.75f);
+    glVertex2f(-L * 0.5f, H * 0.75f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3f(0.71f, 0.86f, 1.0f);
+    glVertex2f(-L * 0.38f, H * 0.38f);
+    glVertex2f(-L * 0.10f, H * 0.38f);
+    glVertex2f(-L * 0.10f, H * 0.66f);
+    glVertex2f(-L * 0.38f, H * 0.66f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+    glColor3f(0.71f, 0.86f, 1.0f);
+    glVertex2f( L * 0.00f, H * 0.38f);
+    glVertex2f( L * 0.28f, H * 0.38f);
+    glVertex2f( L * 0.28f, H * 0.66f);
+    glVertex2f( L * 0.00f, H * 0.66f);
+    glEnd();
+
+    glColor3f(0.1f, 0.1f, 0.1f);
+    drawCircle(-L * 0.28f, -0.10f, 0.22f, 20);
+    drawCircle( L * 0.28f, -0.10f, 0.22f, 20);
+
+    glColor3f(0.78f, 0.78f, 0.78f);
+    drawCircle(-L * 0.28f, -0.10f, 0.09f, 18);
+    drawCircle( L * 0.28f, -0.10f, 0.09f, 18);
+
+    glPopMatrix();
+}
+
+void display() {
+    float XMIN = -12.0f, XMAX = 38.0f;
+    float YMIN = -19.0f, YMAX = 14.0f;
+
+    glClear(GL_COLOR_BUFFER_BIT);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glBegin(GL_POLYGON);
+    glColor3f(0.45f, 0.63f, 0.89f);
+    glVertex2f(XMAX, 3.0f);
+    glVertex2f(XMAX, YMAX);
+    glVertex2f(XMIN, YMAX);
+    glVertex2f(XMIN, 3.0f);
+    glEnd();
+
+    glColor3f(1.0f, 0.31f, 0.24f);
+    drawCircle(30.0f, 7.0f, 1.0f, 40);
+
+    glColor3f(1.0f, 1.0f, 1.0f);
+    drawCircle(cloudPosition - 0.8f, 8.0f, 0.6f, 30);
+    drawCircle(cloudPosition,        8.0f, 0.9f, 30);
+    drawCircle(cloudPosition + 0.8f, 8.0f, 0.6f, 30);
+
+    glColor3f(0, 0, 0);
+    drawTriangle(birdX, birdY, birdX + 0.5f, birdY + 0.4f, birdX + 1.0f, birdY);
+
+    glBegin(GL_POLYGON);
+    glColor3f(0.25f, 0.41f, 0.88f);
+    glVertex2f(38.0f, -19.0f);
+    glVertex2f(38.0f, -10.0f);
+    glVertex2f(-12.0f, -7.0f);
+    glVertex2f(-12.0f, -19.0f);
+    glEnd();
+
+    glBegin(GL_POLYGON);
+    glColor3f(0.10f, 0.50f, 0.00f);
+    glVertex2f(1.0f, -8.0f);
+    glVertex2f(38.0f, -12.0f);
+    glVertex2f(38.0f, 3.0f);
+    glVertex2f(-12.0f, 3.0f);
+    glVertex2f(-12.0f, -11.0f);
+    glEnd();
+
+    drawBusRoad();
+    drawBus();
+
+    drawStall(17.20f, 19.00f, 0.82f, 0.14f, 0.18f);
+    drawStall(19.25f, 21.05f, 0.16f, 0.67f, 0.29f);
+    drawStall(21.30f, 23.10f, 0.94f, 0.47f, 0.12f);
+    drawStall(23.35f, 24.95f, 0.24f, 0.47f, 0.94f);
+
+    glPushMatrix();
+    glTranslatef(boatX, 0.0f, 0.0f);
+    drawBoat();
+    glPopMatrix();
+
+    glutSwapBuffers();
+}
+
+void idle() {
+    float XMIN = -12.0f, XMAX = 38.0f;
+    float YMAX = 14.0f;
+
+    cloudPosition += 0.15f;
+    if (cloudPosition > XMAX + 2.0f) cloudPosition = XMIN - 2.0f;
+
+    birdX += 0.22f;
+    birdY += 0.06f;
+    if (birdX > XMAX + 2.0f || birdY > YMAX + 2.0f) {
+        birdX = XMIN;
+        birdY = 6.0f;
+    }
+
+    boatX += 0.12f;
+    if (boatX > XMAX + 8.0f) boatX = XMIN - 8.0f;
+
+    busT += 0.0038f;
+    if (busT > 1.02f) busT = 0.0f;
+
+    glutPostRedisplay();
+}
+
+void reshape(GLsizei w, GLsizei h) {
+    float XMIN = -12.0f, XMAX = 38.0f;
+    float YMIN = -19.0f, YMAX = 14.0f;
+
+    if (h == 0) h = 1;
+    glViewport(0, 0, w, h);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(XMIN, XMAX, YMIN, YMAX);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
+int main(int argc, char** argv) {
+    glutInit(&argc, argv);
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB);
+    glutInitWindowSize(1300, 700);
+    glutInitWindowPosition(50, 50);
+    glutCreateWindow("Village Scenery - Idle");
+
+    initGL();
+    glutDisplayFunc(display);
+    glutReshapeFunc(reshape);
+    glutIdleFunc(idle);
+    glutMainLoop();
+    return 0;
+}
