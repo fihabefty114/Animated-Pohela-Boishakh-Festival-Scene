@@ -1,675 +1,2012 @@
-//hlw
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
+#include <iostream>
+#include <GL/gl.h>
 #include <GL/glut.h>
-#include <GL/glu.h>
-#include <cmath>
-#include <cstdlib>
+#include <math.h>
 
-// ===================== World Range (Ortho 2D) =====================
-const float XMIN = -12.0f, XMAX = 38.0f;
-const float YMIN = -19.0f, YMAX = 14.0f;
-const float PI   = 3.14159265358979323846f;
+/* =============================================================================
+   VILLAGE SCENERY — GLUT/OPENGL (2D)
+   -----------------------------------------------------------------------------
+   • Projection: gluOrtho2D(-12, 38, -19, 14)  → X spans left→right, Y bottom→top
+   • Double buffered (GLUT_DOUBLE) to avoid flicker
+   • Animations: clouds, 2 boats (L→R and R→L), birds, 2 Ferris wheels, night moon
+   -----------------------------------------------------------------------------
+   CONTROLS (Keyboard/Mouse):
+   - s : START Ferris wheels, STOP Boat-1
+   - r : RUN Boat-1 at default speed
+   - p : STOP Ferris wheels
+   - k : START Boat-1
+   - l : STOP  Boat-1
+   - n : Switch to NIGHT (moon rises)
+   - d : Switch to DAY   (sun)
+   - ←/→ (arrow keys): nudge Boat-1 backward/forward
+   - Mouse Left  : increase Boat-1 speed
+   - Mouse Right : decrease Boat-1 speed
+   ========================================================================== */
 
-// ===================== Animation Globals =====================
-float moveC  = 0.0f;      // clouds x-shift
-float moveB1 = 0.0f;      // boat x-shift
-float speedBoat1 = 0.02f; // boat speed
+// --------------------------- GLOBAL STATE -----------------------------------
+float moveC  = 0.0f;   // cloud X offset
+float moveB1 = 0.0f;   // boat-1 X offset (left → right)
+float moveB2 = 0.0f;   // boat-2 X offset (right → left)
+float speed  = 0.02f;  // Boat-1 adjustable speed
 
-bool  isNight = false;
+// Ferris wheels rotation (clockwise)
+float wheelAngle1 = 0.0f;
+float wheelAngle2 = 0.0f;
+bool  wheelsRunning = true; // true = rotating
 
-float kitePhase  = 0.0f;  // kite sway phase
+// Day/Night + Moon animation
+bool  isNight      = false; // false=day, true=night
+bool  moonRising   = false; // true while moon is rising
+float moonX        = 800.0f; // near hill-4
+float moonY        = 900.0f;  // starts behind hill
+float moonTargetY  = 900.0f;  // final height
+float kiteX = 200.0f;
+float kiteY = 1.0f;      // <-- নতুন
+float kiteScale = 1.0f;
 
-bool  busRun     = true;
-float busS       = 0.0f;  // 0..1 along road
-float busSpeed   = 0.0038f;
 
-float waterPhase = 0.0f;  // water wave phase
+// Night stars (fixed points)
+const float STAR_POS [][2] = {
+    { -940.0f,  750.0f },
+    { -840.0f,  966.7f },
+    { -740.0f,  616.7f },
+    { -640.0f,  866.7f },
+    { -568.0f,  666.7f },
+    { -480.0f,  916.7f },
+    { -376.0f,  633.3f },
+    { -272.0f, 1000.0f },
+    { -168.0f,  783.3f },
+    {  -60.0f,  983.3f },
+    {   40.0f,  683.3f },
+    {  140.0f,  883.3f },
+    {  240.0f,  666.7f },
+    {  352.0f,  933.3f },
+    {  448.0f,  650.0f },
+    {  560.0f,  850.0f },
+    {  656.0f,  700.0f },
+    {  760.0f,  966.7f },
+    {  860.0f,  733.3f },
+    {  940.0f,  933.3f }
+};
 
-// ===================== Bus road endpoints =====================
-struct P2 { float x, y; };
-P2 busA = { 4.6f,  -5.8f };
-P2 busB = { 38.0f, -5.8f };
 
-// ===================== Helper Functions (NO #define macros) =====================
-static float clampf(float v, float lo, float hi)
+// Birds (flock moving left→right)
+float birdsX = -12.5f;
+float birdsY = 10.0f;
+float birdsSpeed = 0.10f;
+float birdsPhase = 0.0f;
+const float s =0.0f;
+
+// --------------------------- DRAW HELPERS -----------------------------------
+/* === FAIR STALL (colorful, reusable) =======================================
+   Anchor at (cx,cy), scaled by 'scale'
+   ========================================================================== */
+//for sun
+void drawSolidCircle2D(float cx, float cy, float r)
 {
-    if(v < lo) return lo;
-    if(v > hi) return hi;
-    return v;
+    const int seg = 120;
+    glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(cx, cy);
+        for(int i=0;i<=seg;i++){
+            float a = 2.0f * 3.1415926f * i / seg;
+            glVertex2f(cx + r*cosf(a), cy + r*sinf(a));
+        }
+    glEnd();
+
+}
+//for sky
+void drawCircle2D(float cx, float cy, float r)
+{
+    int segments = 60;
+    glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(cx, cy);
+        for (int i = 0; i <= segments; i++) {
+            float a = 2.0f * 3.1415926f * i / segments;
+            glVertex2f(cx + r * cosf(a), cy + r * sinf(a));
+        }
+    glEnd();
+}
+//draw single cloud
+void drawSingleCloud()
+{
+    if (isNight)
+        glColor3ub(170, 170, 185);   // night: dark/gray cloud
+    else
+    glColor3ub(255, 255, 255);   // day: white cloud
+
+    // cloud body (local coordinates)
+    drawSolidCircle2D(-60,  0, 45);
+    drawSolidCircle2D(  0, 20, 55);
+    drawSolidCircle2D( 60,  0, 45);
+    drawSolidCircle2D(  0,-20, 40);
 }
 
-// sea top edge: (-12,-7) to (38,-10)
-static float seaTopY(float x)
+
+//draw cloud group
+void drawCloudGroup(float x, float y, float scale)
 {
-    return -7.0f - 0.06f * (x + 12.0f);
+    glPushMatrix();
+        glTranslatef(x, y, 0.0f);      // whole group position
+        glScalef(scale, scale, 1.0f);  // whole group size
+
+        // Cloud 1 (left)
+        glPushMatrix();
+            glTranslatef(-200.0f, 0.0f, 0.0f);
+            glScalef(1.2f, 1.2f, 1.0f);
+            drawSingleCloud();
+        glPopMatrix();
+
+        // Cloud 2 (middle)
+        glPushMatrix();
+            glTranslatef(0.0f, 40.0f, 0.0f);
+            glScalef(1.0f, 1.0f, 1.0f);
+            drawSingleCloud();
+        glPopMatrix();
+
+        // Cloud 3 (right)
+        glPushMatrix();
+            glTranslatef(220.0f, -20.0f, 0.0f);
+            glScalef(0.8f, 0.8f, 1.0f);
+            drawSingleCloud();
+        glPopMatrix();
+
+    glPopMatrix();
 }
 
-// filled circle
-static void drawCircle2D(float cx, float cy, float r, int seg)
+// ================= TREE (Cloud-style Top) =================
+void drawTreeCloudTop(float x, float y, float scale)
+{
+    // -------- canopy color (night হলে একটু ডার্ক) ----------
+    if (!isNight) glColor3ub(50, 205, 50);
+    else          glColor3ub(25, 110, 25);
+
+    // -------- canopy (cloud-like circles) ----------
+    float r = 55.0f * scale;
+
+    // বড় বড় circle গুলো
+    drawSolidCircle2D(x + 0.0f   * scale, y + 0.0f   * scale, r);
+    drawSolidCircle2D(x + 70.0f  * scale, y + 0.0f   * scale, r);
+    drawSolidCircle2D(x + 35.0f  * scale, y + 55.0f  * scale, r * 1.10f);
+    drawSolidCircle2D(x - 35.0f  * scale, y + 40.0f  * scale, r * 0.95f);
+    drawSolidCircle2D(x + 105.0f * scale, y + 40.0f  * scale, r * 0.95f);
+
+    // -------- trunk ----------
+    glColor3ub(139, 69, 19);
+
+    float trunkW = 35.0f * scale;
+    float trunkH = 240.0f * scale;
+
+    glBegin(GL_QUADS);
+        glVertex2f(x + 35.0f*scale - trunkW*0.5f, y - trunkH);
+        glVertex2f(x + 35.0f*scale + trunkW*0.5f, y - trunkH);
+        glVertex2f(x + 35.0f*scale + trunkW*0.5f, y - 10.0f*scale);
+        glVertex2f(x + 35.0f*scale - trunkW*0.5f, y - 10.0f*scale);
+    glEnd();
+
+    // -------- small branch (optional) ----------
+    glBegin(GL_TRIANGLES);
+        glVertex2f(x + 35.0f*scale,          y - 20.0f*scale);
+        glVertex2f(x + 10.0f*scale,          y - 80.0f*scale);
+        glVertex2f(x + 60.0f*scale,          y - 80.0f*scale);
+    glEnd();
+}
+// for ferry wheel
+void drawCircle(float cx, float cy, float r, int seg = 120)
 {
     glBegin(GL_TRIANGLE_FAN);
-    glVertex2f(cx, cy);
-    for(int i=0; i<=seg; ++i){
-        float a = 2.0f * PI * (float)i / (float)seg;
-        glVertex2f(cx + r*(float)cos(a), cy + r*(float)sin(a));
-    }
-    glEnd();
-}
-
-// cloud cluster
-static void drawCloudCluster(float baseX, float baseY, float r,
-                             unsigned char cR, unsigned char cG, unsigned char cB)
-{
-    glPushMatrix();
-
-    glColor3ub(cR,cG,cB);
-    drawCircle2D(baseX - 0.7f,  baseY,        r,       22);
-    drawCircle2D(baseX,         baseY + 0.2f, r*1.15f, 22);
-    drawCircle2D(baseX + 0.7f,  baseY,        r,       22);
-    drawCircle2D(baseX - 0.2f,  baseY + 0.45f, r*0.9f, 22);
-    drawCircle2D(baseX + 0.25f, baseY + 0.45f, r*0.9f, 22);
-
-    glPopMatrix();
-}
-
-// kite (sway)
-static void drawKiteSway(float cx, float cy, float sx, float sy,
-                         unsigned char R, unsigned char G, unsigned char B,
-                         float tailX1, float tailY1, float tailX2, float tailY2,
-                         unsigned char bowR, unsigned char bowG, unsigned char bowB,
-                         float phaseOffset)
-{
-    glPushMatrix();
-
-    float sway = (float)sin(kitePhase + phaseOffset) * 6.0f;
-
-    glTranslatef(cx, cy, 0.0f);
-    glRotatef(sway, 0,0,1);
-
-    // kite body
-    glBegin(GL_TRIANGLES);
-    glColor3ub(R,G,B);
-    glVertex2f(0.0f,  sy);
-    glVertex2f( sx,   0.0f);
-    glVertex2f(0.0f, -sy);
-
-    glVertex2f(0.0f, -sy);
-    glVertex2f(-sx,   0.0f);
-    glVertex2f(0.0f,  sy);
-    glEnd();
-
-    // cross lines
-    glLineWidth(2.0f);
-    glColor3ub(20,20,20);
-    glBegin(GL_LINES);
-    glVertex2f(-sx*0.9f, 0.0f); glVertex2f( sx*0.9f, 0.0f);
-    glVertex2f(0.0f, sy*0.95f); glVertex2f(0.0f, -sy*0.95f);
-    glEnd();
-
-    // string
-    glLineWidth(1.5f);
-    glColor3ub(20,20,20);
-    glBegin(GL_LINE_STRIP);
-    glVertex2f(0.0f, -sy);
-    glVertex2f(tailX1 - cx, tailY1 - cy);
-    glVertex2f(tailX2 - cx, tailY2 - cy);
-    glEnd();
-
-    // bow
-    glBegin(GL_TRIANGLES);
-    glColor3ub(bowR, bowG, bowB);
-    {
-        float bx = (tailX1 - cx), by = (tailY1 - cy);
-        glVertex2f(bx, by);
-        glVertex2f(bx - 0.15f, by - 0.20f);
-        glVertex2f(bx + 0.15f, by - 0.20f);
-    }
-    glEnd();
-
-    glPopMatrix();
-}
-
-// stall
-static void drawStall(float xL, float xR, unsigned char rr, unsigned char gg, unsigned char bb)
-{
-    glPushMatrix();
-
-    glBegin(GL_QUADS);
-    glColor3ub(240,238,220); glVertex2f(xL, 0.10f);
-    glColor3ub(240,238,220); glVertex2f(xR, 0.10f);
-    glColor3ub(232,220,200); glVertex2f(xR, 3.40f);
-    glColor3ub(232,220,200); glVertex2f(xL, 3.40f);
-    glEnd();
-
-    glBegin(GL_QUADS);
-    glColor3ub(120,85,40);
-    glVertex2f(xL, 0.10f); glVertex2f(xL+0.12f, 0.10f);
-    glVertex2f(xL+0.12f, 3.70f); glVertex2f(xL, 3.70f);
-    glEnd();
-
-    glBegin(GL_QUADS);
-    glColor3ub(120,85,40);
-    glVertex2f(xR-0.12f, 0.10f); glVertex2f(xR, 0.10f);
-    glVertex2f(xR, 3.70f); glVertex2f(xR-0.12f, 3.70f);
-    glEnd();
-
-    glBegin(GL_QUADS);
-    glColor3ub(210,160,90);
-    glVertex2f(xL+0.18f, 1.20f);
-    glVertex2f(xR-0.18f, 1.20f);
-    glColor3ub(170,120,65);
-    glVertex2f(xR-0.18f, 1.90f);
-    glVertex2f(xL+0.18f, 1.90f);
-    glEnd();
-
-    float cx = (xL+xR)*0.5f;
-    glBegin(GL_TRIANGLES);
-    glColor3ub(rr,gg,bb);
-    glVertex2f(xL, 3.70f); glVertex2f(cx, 4.40f); glVertex2f(cx, 3.70f);
-    glEnd();
-
-    glBegin(GL_TRIANGLES);
-    glColor3ub(rr,gg,bb);
-    glVertex2f(cx, 3.70f); glVertex2f(xR, 3.70f); glVertex2f(cx, 4.40f);
-    glEnd();
-
-    glLineWidth(4.0f);
-    glColor3ub(120,85,40);
-    glBegin(GL_LINES);
-    glVertex2f(xL, 3.70f);
-    glVertex2f(xR, 3.70f);
-    glEnd();
-
-    glPopMatrix();
-}
-
-// boatman
-static void drawBoatman(float x, float y, float s)
-{
-    glPushMatrix();
-
-    // head
-    glColor3ub(245, 222, 179);
-    drawCircle2D(x, y + 0.55f*s, 0.18f*s, 18);
-
-    // body
-    glColor3ub(40, 160, 90);
-    glBegin(GL_QUADS);
-    glVertex2f(x - 0.18f*s, y + 0.40f*s);
-    glVertex2f(x + 0.18f*s, y + 0.40f*s);
-    glVertex2f(x + 0.18f*s, y - 0.05f*s);
-    glVertex2f(x - 0.18f*s, y - 0.05f*s);
-    glEnd();
-
-    // legs
-    glColor3ub(200,200,200);
-    glLineWidth(3.0f);
-    glBegin(GL_LINES);
-    glVertex2f(x - 0.05f*s, y - 0.05f*s); glVertex2f(x - 0.22f*s, y - 0.25f*s);
-    glVertex2f(x + 0.05f*s, y - 0.05f*s); glVertex2f(x + 0.22f*s, y - 0.25f*s);
-    glEnd();
-
-    // oar
-    glColor3ub(120,85,40);
-    glLineWidth(4.0f);
-    glBegin(GL_LINES);
-    glVertex2f(x + 0.10f*s, y + 0.15f*s);
-    glVertex2f(x + 0.95f*s, y - 0.55f*s);
-    glEnd();
-
-    glLineWidth(6.0f);
-    glBegin(GL_LINES);
-    glVertex2f(x + 0.95f*s, y - 0.55f*s);
-    glVertex2f(x + 1.10f*s, y - 0.70f*s);
-    glEnd();
-
-    glPopMatrix();
-}
-
-// water wave bands only (no oval/circle ripples)
-static void drawWaterBands()
-{
-    glPushMatrix();
-
-    unsigned char wr = isNight ? 160 : 235;
-    unsigned char wg = isNight ? 200 : 250;
-    unsigned char wb = 255;
-
-    glColor3ub(wr,wg,wb);
-    glLineWidth(2.0f);
-
-    float x0 = XMIN, x1 = XMAX;
-    float bottom = YMIN;
-
-    for(int band=0; band<11; ++band){
-        float base  = -18.2f + band*0.95f;
-        float amp   = 0.10f + 0.02f*band;
-        float freq  = 0.55f;
-        float phase = waterPhase*(1.0f + 0.04f*band) + band*1.2f;
-
-        glBegin(GL_LINE_STRIP);
-        for(float x=x0; x<=x1; x+=0.55f){
-            float top = seaTopY(x) - 0.25f;
-            float y   = base + amp*(float)sin(freq*x + phase);
-
-            if(y > top) y = top;
-            if(y < bottom + 0.25f) y = bottom + 0.25f;
-
-            glVertex2f(x, y);
+        glVertex2f(cx, cy);
+        for (int i = 0; i <= seg; i++) {
+            float a = 2.0f * 3.1415926f * i / seg;
+            glVertex2f(cx + r * cosf(a), cy + r * sinf(a));
         }
-        glEnd();
-    }
-
-    glPopMatrix();
+    glEnd();
 }
-
-// bus road
-static void drawBusRoad()
+//===========================Ferries wheel 1=============================
+void ferrisWheel1(float moveX, float moveY)
 {
     glPushMatrix();
+    glTranslatef(moveX, moveY, 0);
+    glScalef(0.75f, 0.75f, 1.0f);
 
-    float w = 1.6f;
-    glColor3ub(85,85,90);
+
+    /* ================= BASE ================= */
     glBegin(GL_QUADS);
-    glVertex2f(busA.x, busA.y + w*0.5f);
-    glVertex2f(busB.x, busB.y + w*0.5f);
-    glVertex2f(busB.x, busB.y - w*0.5f);
-    glVertex2f(busA.x, busA.y - w*0.5f);
+        glColor3ub(40,70,140);
+        glVertex2f(320, -340);
+        glVertex2f(680, -340);
+       //glColor3ub(90,90,96);
+        glVertex2f(680, -310);
+        glVertex2f(320, -310);
     glEnd();
 
-    glLineWidth(3.0f);
-    glColor3ub(240,240,240);
+    /* ================= STAND ================= */
+    glLineWidth(10);
+    glColor3ub(50,50,56);
     glBegin(GL_LINES);
-    glVertex2f(busA.x, busA.y);
-    glVertex2f(busB.x, busB.y);
+        glVertex2f(380, -310); glVertex2f(500, -100);
+        glVertex2f(620, -310); glVertex2f(500, -100);
     glEnd();
 
-    glPopMatrix();
-}
-
-// bus
-static void drawBus()
-{
+    /* ================= ROTATING WHEEL ================= */
     glPushMatrix();
+        glTranslatef(500, -100, 0);
+        glRotatef(wheelAngle1, 0, 0, 1);
 
-    float t = busS;
-    if(t > 1.0f) t -= 1.0f;
+        // rim
+        glColor3ub(245,245,250);
+        glBegin(GL_TRIANGLE_STRIP);
+            for(int i=0;i<=120;i++){
+                float t = 2*3.1415926f*i/120;
+                glVertex2f(160*cosf(t), 160*sinf(t));
+                glVertex2f(145*cosf(t), 145*sinf(t));
+            }
+        glEnd();
 
-    float x = busA.x + (busB.x - busA.x) * t;
-    float y = busA.y;
+        // spokes
+        glLineWidth(2);
+        glBegin(GL_LINES);
+            for(int i=0;i<12;i++){
+                float t = 2*3.1415926f*i/12;
+                glVertex2f(0,0);
+                glVertex2f(145*cosf(t),145*sinf(t));
+            }
+        glEnd();
 
-    glTranslatef(x, y, 0.0f);
+        // hub
+        glColor3ub(230,40,70);
+        drawCircle(0,0,22);
+    glPopMatrix();
 
-    float L = 3.6f;
-    float H = 1.35f;
+    /* ================= GONDOLAS ================= */
+    for(int i=0;i<10;i++){
+        float t = 2*3.1415926f*i/10 + wheelAngle1*3.1415926f/180;
+        float x = 500 + 160*cosf(t);
+        float y = -100 + 160*sinf(t);
 
-    glBegin(GL_QUADS);
-    glColor3ub(240,60,60);
-    glVertex2f(-L*0.5f, 0.00f);
-    glVertex2f( L*0.5f, 0.00f);
-    glColor3ub(200,40,40);
-    glVertex2f( L*0.5f, H*0.75f);
-    glVertex2f(-L*0.5f, H*0.75f);
-    glEnd();
+        glColor3ub(40,40,40);
+        glLineWidth(2);
+        glBegin(GL_LINES);
+            glVertex2f(x,y);
+            glVertex2f(x,y-20);
+        glEnd();
 
-    glBegin(GL_QUADS);
-    glColor3ub(255,230,230);
-    glVertex2f(-L*0.5f, H*0.75f);
-    glVertex2f( L*0.5f, H*0.75f);
-    glVertex2f( L*0.5f, H*0.92f);
-    glVertex2f(-L*0.5f, H*0.92f);
-    glEnd();
-
-    glBegin(GL_QUADS);
-    glColor3ub(180,220,255);
-    glVertex2f(-L*0.38f, H*0.38f);
-    glVertex2f(-L*0.10f, H*0.38f);
-    glVertex2f(-L*0.10f, H*0.66f);
-    glVertex2f(-L*0.38f, H*0.66f);
-    glEnd();
-
-    glBegin(GL_QUADS);
-    glColor3ub(180,220,255);
-    glVertex2f( L*0.00f, H*0.38f);
-    glVertex2f( L*0.28f, H*0.38f);
-    glVertex2f( L*0.28f, H*0.66f);
-    glVertex2f( L*0.00f, H*0.66f);
-    glEnd();
-
-    glColor3ub(20,20,20);
-    drawCircle2D(-L*0.28f, -0.10f, 0.22f, 20);
-    drawCircle2D( L*0.28f, -0.10f, 0.22f, 20);
-
-    glColor3ub(200,200,200);
-    drawCircle2D(-L*0.28f, -0.10f, 0.09f, 18);
-    drawCircle2D( L*0.28f, -0.10f, 0.09f, 18);
-
-    if (isNight) {
-        glColor3ub(255, 240, 180);
-        glBegin(GL_TRIANGLES);
-        glVertex2f(L*0.50f, 0.25f);
-        glVertex2f(L*0.50f + 1.00f, 0.40f);
-        glVertex2f(L*0.50f, 0.60f);
+        glBegin(GL_QUADS);
+            glColor3ub(180,200,230);
+            glVertex2f(x-20,y-20);
+            glVertex2f(x+20,y-20);
+            glVertex2f(x+20,y-60);
+            glVertex2f(x-20,y-60);
         glEnd();
     }
 
     glPopMatrix();
 }
-
-// boat (body only)
-static void drawBoat()
+//===========================Ferries wheel 2=============================
+void ferrisWheel2(float moveX, float moveY)
 {
     glPushMatrix();
+    glTranslatef(moveX, moveY, 0);
+    glScalef(0.65f, 0.65f, 1.0f);
 
-    // boat upper
+
+    // BASE
     glBegin(GL_QUADS);
-    glColor3ub(139,69,19);
-    glVertex2f(1.0f, -14.0f);
-    glVertex2f(1.50f, -13.0f);
-    glVertex2f(-2.0f, -13.0f);
-    glVertex2f(-3.0f, -14.0f);
+        glColor3ub(0,255,0);
+        glVertex2f(320, -340);
+        glVertex2f(680, -340);
+       // glColor3ub(90,90,96);
+        glVertex2f(680, -310);
+        glVertex2f(320, -310);
     glEnd();
 
-    // boat bottom
-    glBegin(GL_QUADS);
-    glColor3ub(0,0,0);
-    glVertex2f(2.0f, -14.5f);
-    glVertex2f(2.0f, -14.0f);
-    glVertex2f(-3.0f, -14.0f);
-    glVertex2f(-3.0f, -14.5f);
+    /* ================= STAND ================= */
+    glLineWidth(10);
+    glColor3ub(50,50,56);
+    glBegin(GL_LINES);
+        glVertex2f(380, -310); glVertex2f(500, -100);
+        glVertex2f(620, -310); glVertex2f(500, -100);
     glEnd();
 
-    // tips
-    glBegin(GL_TRIANGLES);
-    glColor3ub(0,0,0);
-    glVertex2f(-3.0f, -14.5f);
-    glVertex2f(-3.0f, -14.0f);
-    glVertex2f(-4.5f, -13.7f);
-    glEnd();
+    /* ================= ROTATING WHEEL ================= */
+    glPushMatrix();
+        glTranslatef(500, -100, 0);
+        glRotatef(wheelAngle1, 0, 0, 1);
 
-    glBegin(GL_TRIANGLES);
-    glColor3ub(0,0,0);
-    glVertex2f(2.0f, -14.5f);
-    glVertex2f(3.5f, -13.7f);
-    glVertex2f(2.0f, -14.0f);
-    glEnd();
+        // rim
+        glColor3ub(245,245,250);
+        glBegin(GL_TRIANGLE_STRIP);
+            for(int i=0;i<=120;i++){
+                float t = 2*3.1415926f*i/120;
+                glVertex2f(160*cosf(t), 160*sinf(t));
+                glVertex2f(145*cosf(t), 145*sinf(t));
+            }
+        glEnd();
+
+        // spokes
+        glLineWidth(2);
+        glBegin(GL_LINES);
+            for(int i=0;i<12;i++){
+                float t = 2*3.1415926f*i/12;
+                glVertex2f(0,0);
+                glVertex2f(145*cosf(t),145*sinf(t));
+            }
+        glEnd();
+
+        // hub
+        glColor3ub(230,40,70);
+        drawCircle(0,0,22);
+    glPopMatrix();
+
+    /* ================= GONDOLAS ================= */
+    for(int i=0;i<10;i++){
+        float t = 2*3.1415926f*i/10 + wheelAngle1*3.1415926f/180;
+        float x = 500 + 160*cosf(t);
+        float y = -100 + 160*sinf(t);
+
+        glColor3ub(40,40,40);
+        glLineWidth(2);
+        glBegin(GL_LINES);
+            glVertex2f(x,y);
+            glVertex2f(x,y-20);
+        glEnd();
+
+        glBegin(GL_QUADS);
+            glColor3ub(180,200,230);
+            glVertex2f(x-20,y-20);
+            glVertex2f(x+20,y-20);
+            glVertex2f(x+20,y-60);
+            glVertex2f(x-20,y-60);
+        glEnd();
+    }
 
     glPopMatrix();
 }
+//==================================fair stall========================================
+void drawFairStall(float cx, float cy, float scale)
+{
 
-// middle axes (for coordinate work)
-static void drawMiddleAxes()
+    glPushMatrix();
+    glTranslatef(cx, cy, 0.0f);
+    glScalef(100, 200, 1.0f);
+
+    // base
+    glBegin(GL_QUADS);
+        glColor3f(0.55f, 0.27f, 0.55f);
+        glVertex2f(-2.30f, 0.00f);
+        glVertex2f( 2.30f, 0.00f);
+        glVertex2f( 2.30f, 0.25f);
+        glVertex2f(-2.30f, 0.25f);
+    glEnd();
+
+    // back wall
+    glBegin(GL_QUADS);
+        glColor3f(1.00f, 1.00f, 1.00f);
+        glVertex2f(-1.90f, 0.25f);
+        glVertex2f( 1.90f, 0.25f);
+        glVertex2f( 1.90f, 1.65f);
+        glVertex2f(-1.90f, 1.65f);
+    glEnd();
+
+    // counter
+    glBegin(GL_QUADS);
+        glColor3f(0.82f, 0.52f, 0.32f);
+        glVertex2f(-1.90f, 0.85f);
+        glVertex2f( 1.90f, 0.85f);
+        glVertex2f( 1.90f, 1.15f);
+        glVertex2f(-1.90f, 1.15f);
+    glEnd();
+
+    // side posts
+    glBegin(GL_QUADS);
+        glColor3f(0.35f, 0.16f, 0.05f);
+        // left
+        glVertex2f(-2.10f, 0.25f);
+        glVertex2f(-1.90f, 0.25f);
+        glVertex2f(-1.90f, 2.00f);
+        glVertex2f(-2.10f, 2.00f);
+        // right
+        glVertex2f( 1.90f, 0.25f);
+        glVertex2f( 2.10f, 0.25f);
+        glVertex2f( 2.10f, 2.00f);
+        glVertex2f( 1.90f, 2.00f);
+    glEnd();
+
+    // canopy strip
+    glBegin(GL_QUADS);
+        glColor3f(1.00f, 0.50f, 0.20f);
+        glVertex2f(-2.40f, 2.30f);
+        glVertex2f(-2.40f, 1.90f);
+        glVertex2f( 2.40f, 1.90f);
+        glVertex2f( 2.40f, 2.30f);
+    glEnd();
+
+    // canopy scallops
+glBegin(GL_TRIANGLES);
+    glColor3f(0.20f, 0.50f, 1.00f);
+    glVertex2f(-2.20f, 2.30f);
+    glVertex2f( 2.20f, 2.30f);
+    glVertex2f( 0.00f, 3.00f);
+glEnd();
+
+// canopy stripes (same style: left/mid/right + i%2)
+
+float x = 4.40f /9;   // (-2.20 to 2.20) => width 4.40
+
+for (int i = 0; i < 9; i++) {
+    float left  = -2.20f + i * x;
+    float mid   = left + x * 0.5f;
+    float right = left + x;
+
+    if (i % 2 == 0)
+        glColor3f(1.00f, 1.00f, 0.60f);   // pink-ish
+    else
+        glColor3f(1.00f, 0.40f, 0.00f);   // orange-ish
+
+    glBegin(GL_TRIANGLES);
+        glVertex2f(0.00f, 3.00f);   // apex (top)
+        glVertex2f(left,  2.30f);   // base left
+        glVertex2f(right, 2.30f);   // base right
+    glEnd();
+}
+
+
+    // side curtains
+    glBegin(GL_QUADS);
+        glColor3f(0.95f, 0.85f, 0.80f);
+        //left
+        glVertex2f(-2.40f, 1.90f);
+        glVertex2f(-2.10f, 1.90f);
+        glVertex2f(-2.10f, 0.25f);
+        glVertex2f(-2.40f, 0.25f);
+
+        //right
+        glVertex2f( 2.10f, 1.90f);
+        glVertex2f( 2.40f, 1.90f);
+        glVertex2f( 2.40f, 0.25f);
+        glVertex2f( 2.10f, 0.25f);
+    glEnd();
+
+    // bunting cord
+    glLineWidth(2.0f);
+    glColor3f(0.00f, 0.00f, 0.00f);
+    glBegin(GL_LINES);
+        glVertex2f(-1.90f, 1.30f);
+        glVertex2f( 1.90f, 1.30f);
+    glEnd();
+
+    // bunting flags
+    for (int i = 0; i < 8; i++) {
+        float bx = -1.70f + i * 0.45f;
+        if (i % 3 == 0)
+                glColor3f(0.20f, 0.80f, 0.20f);
+        else if (i % 3 == 1)
+        glColor3f(0.95f, 0.60f, 0.10f);
+        else
+        glColor3f(0.20f, 0.70f, 0.90f);
+
+        glBegin(GL_TRIANGLES);
+            glVertex2f(bx,         1.30f);
+            glVertex2f(bx + 0.18f, 1.30f);
+            glVertex2f(bx + 0.09f, 1.05f);
+        glEnd();
+    }
+
+int n = 8;
+
+// flag width
+float w = 0.18f;
+
+// spacing between flags
+float gap = 0.45f;
+
+// starting x
+float startX = -1.70f;
+
+for (int i = 0; i < n; i++) {
+
+    // left & right boundary (range-based)
+    float left  = startX + i * gap;
+    float right = left + w;
+    float mid   = (left + right) * 0.5f;
+
+    // same color logic
+    if (i % 3 == 0)
+        glColor3f(1.00f, 0.00f, 0.00f);
+    else if (i % 3 == 1)
+        glColor3f(0.00f, 1.00f, 0.00f);
+    else
+        glColor3f(0.00f, 0.00f, 1.00f);
+
+    // SAME triangle, just expressed with left/mid/right
+    glBegin(GL_TRIANGLES);
+        glVertex2f(left,  1.30f);  // base left
+        glVertex2f(right, 1.30f);  // base right
+        glVertex2f(mid,   1.10f);  // apex (down)
+    glEnd();
+}
+
+
+    // merchandise blocks
+float start1 = -1.70f;
+float step   = 0.85f;   // start-to-start distance
+float w1      = 0.60f;   // block width
+
+for (int i = 0; i < 4; ++i)
+{
+    float left  = start1 + i * step;
+    float right = left + w1;
+
+    if (i % 2 == 0)
+        glColor3f(0.95f, 0.85f, 0.10f);
+    else
+        glColor3f(0.20f, 0.90f, 0.80f);
+
+    glBegin(GL_QUADS);
+        glVertex2f(left,  0.45f);
+        glVertex2f(right, 0.45f);
+        glVertex2f(right, 0.80f);
+        glVertex2f(left,  0.80f);
+    glEnd();
+}
+
+    glPopMatrix();
+}
+//=================draw human=======================
+
+// -------------------- BOY (SMALL) --------------------
+void drawBoy(float x, float y)
+{
+    // HEAD
+    glColor3ub(255,220,180);
+    drawCircle(x, y + 160, 22);
+
+    // HAIR (top cap)
+    glBegin(GL_TRIANGLES);
+        glColor3ub(30,20,10);
+        glVertex2f(x-22, y+170);
+        glVertex2f(x+22, y+170);
+        glVertex2f(x,    y+190);
+    glEnd();
+
+    // HAIR fringe
+    glBegin(GL_QUADS);
+        glColor3ub(30,20,10);
+        glVertex2f(x-18, y+170);
+        glVertex2f(x+18, y+170);
+        glVertex2f(x+14, y+160);
+        glVertex2f(x-14, y+160);
+    glEnd();
+
+    // BODY (shirt)
+    glBegin(GL_QUADS);
+        glColor3ub(40, 120, 200);
+        glVertex2f(x-18, y+135);
+        glVertex2f(x+18, y+135);
+        glVertex2f(x+18, y+60);
+        glVertex2f(x-18, y+60);
+    glEnd();
+
+    // ARMS
+    glBegin(GL_QUADS);
+        glColor3ub(255,220,180);
+        // left
+        glVertex2f(x-18, y+125);
+        glVertex2f(x-40, y+110);
+        glVertex2f(x-34, y+90);
+        glVertex2f(x-12, y+105);
+        // right
+        glVertex2f(x+18, y+125);
+        glVertex2f(x+40, y+110);
+        glVertex2f(x+34, y+90);
+        glVertex2f(x+12, y+105);
+    glEnd();
+
+    // LEGS (pants)
+    glBegin(GL_QUADS);
+        glColor3ub(25,25,25);
+        // left leg
+        glVertex2f(x-14, y+60);
+        glVertex2f(x-2,  y+60);
+        glVertex2f(x-6,  y+5);
+        glVertex2f(x-18, y+5);
+        // right leg
+        glVertex2f(x+2,  y+60);
+        glVertex2f(x+14, y+60);
+        glVertex2f(x+18, y+5);
+        glVertex2f(x+6,  y+5);
+    glEnd();
+
+    // SHOES
+    glBegin(GL_QUADS);
+        glColor3ub(100,70,35);
+        glVertex2f(x-20, y+5); glVertex2f(x-3, y+5); glVertex2f(x-3, y-8); glVertex2f(x-20, y-8);
+        glVertex2f(x+3,  y+5); glVertex2f(x+20,y+5); glVertex2f(x+20,y-8); glVertex2f(x+3,  y-8);
+    glEnd();
+}
+
+
+// -------------------- GIRL (SMALL) --------------------
+void drawGirl(float x, float y)
+{
+    // HEAD
+    glColor3ub(255,220,180);
+    drawCircle(x, y + 160, 22);
+
+    // HAIR (top)
+    glBegin(GL_TRIANGLES);
+        glColor3ub(25,15,10);
+        glVertex2f(x-22, y+172);
+        glVertex2f(x+22, y+172);
+        glVertex2f(x,    y+192);
+    glEnd();
+
+    // HAIR sides
+    glBegin(GL_QUADS);
+        glColor3ub(25,15,10);
+        // left side
+        glVertex2f(x-22, y+170); glVertex2f(x-14, y+170);
+        glVertex2f(x-10, y+140); glVertex2f(x-22, y+140);
+        // right side
+        glVertex2f(x+14, y+170); glVertex2f(x+22, y+170);
+        glVertex2f(x+22, y+140); glVertex2f(x+10, y+140);
+    glEnd();
+
+    // PONYTAIL (simple)
+    glBegin(GL_TRIANGLES);
+        glColor3ub(25,15,10);
+        glVertex2f(x+18, y+150);
+        glVertex2f(x+45, y+120);
+        glVertex2f(x+18, y+110);
+    glEnd();
+
+    // BLOUSE (top)
+    glBegin(GL_QUADS);
+        glColor3ub(255,170,30);
+        glVertex2f(x-16, y+135);
+        glVertex2f(x+16, y+135);
+        glVertex2f(x+16, y+105);
+        glVertex2f(x-16, y+105);
+    glEnd();
+
+    // SAREE / DRESS (triangle)
+    glBegin(GL_TRIANGLES);
+        glColor3ub(230,60,120);
+        glVertex2f(x,     y+110);
+        glVertex2f(x-30,  y+5);
+        glVertex2f(x+30,  y+5);
+    glEnd();
+
+    // ARMS
+    glBegin(GL_QUADS);
+        glColor3ub(255,220,180);
+        // left
+        glVertex2f(x-16, y+125);
+        glVertex2f(x-36, y+112);
+        glVertex2f(x-30, y+95);
+        glVertex2f(x-10, y+108);
+        // right
+        glVertex2f(x+16, y+125);
+        glVertex2f(x+36, y+112);
+        glVertex2f(x+30, y+95);
+        glVertex2f(x+10, y+108);
+    glEnd();
+
+    // SHOES (small)
+    glBegin(GL_QUADS);
+        glColor3ub(60,60,60);
+        glVertex2f(x-18, y+5); glVertex2f(x-2, y+5); glVertex2f(x-2, y-6); glVertex2f(x-18, y-6);
+        glVertex2f(x+2,  y+5); glVertex2f(x+18,y+5); glVertex2f(x+18,y-6); glVertex2f(x+2,  y-6);
+    glEnd();
+}
+
+
+// -------------------- PAIR (CALL ONE FUNCTION) --------------------
+void drawBoyGirlPair(float x, float y)
 {
     glPushMatrix();
+    // boy left, girl right (same baseline y)
+      glScalef(0.7, 0.7, 1.0f);
+    drawBoy (x - 55, y);
+    drawGirl(x + 55, y);
+      glPopMatrix();
+}
 
-    float midX = (XMIN + XMAX) * 0.5f;
-    float midY = (YMIN + YMAX) * 0.5f;
+void drawHuman(float x, float y)
+{
+    // ---------------- HEAD ----------------
+    glColor3ub(255,220,180);
+    drawCircle(x, y + 260, 35);
 
-    if(!isNight) glColor3ub(255,255,255);
-    else         glColor3ub(220,220,220);
+    // ---------------- BODY ----------------
+    glBegin(GL_QUADS);
+        glColor3ub(40, 90, 180);   // shirt
+        glVertex2f(x-25, y+225);
+        glVertex2f(x+25, y+225);
+        glVertex2f(x+25, y+100);
+        glVertex2f(x-25, y+100);
+    glEnd();
+
+    // ---------------- LEFT ARM ----------------
+    glBegin(GL_QUADS);
+        glColor3ub(255,220,180);
+        glVertex2f(x-25, y+215);
+        glVertex2f(x-55, y+190);
+        glVertex2f(x-45, y+160);
+        glVertex2f(x-15, y+185);
+    glEnd();
+
+    // ---------------- RIGHT ARM ----------------
+    glBegin(GL_QUADS);
+        glColor3ub(255,220,180);
+        glVertex2f(x+25, y+215);
+        glVertex2f(x+55, y+190);
+        glVertex2f(x+45, y+160);
+        glVertex2f(x+15, y+185);
+    glEnd();
+
+    // ---------------- LEFT LEG ----------------
+    glBegin(GL_QUADS);
+        glColor3ub(20,20,20);   // pants
+        glVertex2f(x-20, y+100);
+        glVertex2f(x-5,  y+100);
+        glVertex2f(x-10, y);
+        glVertex2f(x-25, y);
+    glEnd();
+
+    // ---------------- RIGHT LEG ----------------
+    glBegin(GL_QUADS);
+        glColor3ub(20,20,20);
+        glVertex2f(x+5,  y+100);
+        glVertex2f(x+20, y+100);
+        glVertex2f(x+25, y);
+        glVertex2f(x+10, y);
+    glEnd();
+
+    // ---------------- SHOES ----------------
+    glBegin(GL_QUADS);
+        glColor3ub(90,60,30);
+        glVertex2f(x-30, y);
+        glVertex2f(x-5,  y);
+        glVertex2f(x-5,  y-15);
+        glVertex2f(x-30, y-15);
+
+        glVertex2f(x+5,  y);
+        glVertex2f(x+30, y);
+        glVertex2f(x+30, y-15);
+        glVertex2f(x+5,  y-15);
+    glEnd();
+}
+
+
+
+/* === SIMPLE BIRD "V" =======================================================
+   Draw a tiny V-shaped bird at (x,y) scaled by 's'
+   ========================================================================== */
+void drawBirdV(float x, float y, float s)
+{
+    glPushMatrix();
+    glTranslatef(x+200, y+200, 0.0f);
+    glScalef(s, s, 1.0f);
+
+    if (!isNight) glColor3ub(25,25,25);     // day: dark silhouette
+    else          glColor3ub(210,210,220);  // night: light gray
 
     glLineWidth(2.0f);
-
-    // Horizontal axis
     glBegin(GL_LINES);
-        glVertex2f(XMIN, midY);
-        glVertex2f(XMAX, midY);
-    glEnd();
-
-    // Vertical axis
-    glBegin(GL_LINES);
-        glVertex2f(midX, YMIN);
-        glVertex2f(midX, YMAX);
-    glEnd();
-
-    // middle point
-    glPointSize(6.0f);
-    glBegin(GL_POINTS);
-        glVertex2f(midX, midY);
+        glVertex2f(500.0f, 900.0f);
+        glVertex2f(550.0f-20, 920.0f);
+        glVertex2f( 550.0f-20, 920.0f);
+        glVertex2f(600.0f-40, 900.0f);
     glEnd();
 
     glPopMatrix();
 }
 
-static void initGL()
+/* === BIRDS UPDATE TIMER ====================================================
+   Moves flock rightward and adds gentle bobbing
+   ========================================================================== */
+void updateBirds(int)
 {
-    glClearColor(1,1,1,1);
+    birdsX += birdsSpeed;
+    if (birdsX > 1000.0f)
+        birdsX = -1000.0f;
+    birdsPhase += 0.08f+100;
+    glutTimerFunc(10, updateBirds, 0);
+    glutPostRedisplay();
 }
 
-// ===================== GLUT callback: display =====================
-static void display()
+/* === GENERIC BENGALI CROWD ================================================
+   Draw 'count' simple people starting at X=startX along ground Y=gy,
+   spaced by 'spacing' and scaled by 'scale' (alternating male/female).
+   ========================================================================== */
+void drawBengaliCrowd(float startX, float gy, float spacing, float scale, int count)
 {
+    for (int i = 0; i < count; ++i)
+    {
+        float x = startX + i * spacing;
+        bool woman = (i % 2 == 1);
+
+        float headR    = 0.18f * scale;
+        float headY    = gy + 0.95f * scale + headR;
+        float shoulder = gy + 0.95f * scale;
+        float waist    = gy + 0.45f * scale;
+        float armY     = gy + 0.78f * scale;
+
+        // head
+        glPushMatrix();
+        glColor3ub(245,222,179);
+        glTranslatef(x, headY, 0.0f);
+        glutSolidSphere(headR, 16, 16);
+        glPopMatrix();
+
+        if (woman) {
+            // saree + blouse
+            glBegin(GL_TRIANGLES);
+                glColor3ub(230, 60, 120);
+                glVertex2f(x, shoulder);
+                glVertex2f(x - 0.38f*scale, gy);
+                glVertex2f(x + 0.38f*scale, gy);
+            glEnd();
+
+            glBegin(GL_QUADS);
+                glColor3ub(255,170,30);
+                glVertex2f(x - 0.20f*scale, shoulder);
+                glVertex2f(x + 0.20f*scale, shoulder);
+                glVertex2f(x + 0.20f*scale, waist);
+                glVertex2f(x - 0.20f*scale, waist);
+            glEnd();
+
+            glLineWidth(2.0f);
+            glColor3ub(255,255,255);
+            glBegin(GL_LINES);
+                glVertex2f(x - 0.22f*scale, armY + 0.02f*scale);
+                glVertex2f(x + 0.22f*scale, armY - 0.05f*scale);
+            glEnd();
+
+            glLineWidth(2.5f);
+            glColor3ub(120,85,40);
+            glBegin(GL_LINES);
+                glVertex2f(x - 0.15f*scale, armY); glVertex2f(x - 0.15f*scale, gy + 0.30f*scale);
+                glVertex2f(x + 0.15f*scale, armY); glVertex2f(x + 0.15f*scale, gy + 0.30f*scale);
+            glEnd();
+
+            glLineWidth(4.0f);
+            glColor3ub(60,60,60);
+            glBegin(GL_LINES);
+                glVertex2f(x - 0.14f*scale, gy); glVertex2f(x + 0.14f*scale, gy);
+            glEnd();
+        } else {
+            // kurta + pajama
+            glBegin(GL_QUADS);
+                glColor3ub(40,160,90);
+                glVertex2f(x - 0.22f*scale, shoulder);
+                glVertex2f(x + 0.22f*scale, shoulder);
+                glVertex2f(x + 0.22f*scale, waist);
+                glVertex2f(x - 0.22f*scale, waist);
+            glEnd();
+
+            glLineWidth(3.0f);
+            glColor3ub(200,200,200);
+            glBegin(GL_LINES);
+                glVertex2f(x - 0.10f*scale, waist); glVertex2f(x - 0.10f*scale, gy);
+                glVertex2f(x + 0.10f*scale, waist); glVertex2f(x + 0.10f*scale, gy);
+            glEnd();
+
+            glLineWidth(2.5f);
+            glColor3ub(120,85,40);
+            glBegin(GL_LINES);
+                glVertex2f(x - 0.16f*scale, armY); glVertex2f(x - 0.16f*scale, gy + 0.32f*scale);
+                glVertex2f(x + 0.16f*scale, armY); glVertex2f(x + 0.16f*scale, gy + 0.32f*scale);
+            glEnd();
+
+            glLineWidth(4.0f);
+            glColor3ub(60,60,60);
+            glBegin(GL_LINES);
+                glVertex2f(x - 0.14f*scale, gy); glVertex2f(x + 0.14f*scale, gy);
+            glEnd();
+        }
+    }
+}
+
+// --------------------------- FULL SCENE RENDER ------------------------------
+void DrawAllComponents()
+{
+    // clear
+    glClearColor(1.0f,1.0f,1.0f,1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    glMatrixMode(GL_MODELVIEW);
+    glColor3d(1,0,0);
     glLoadIdentity();
 
-    // 1) SKY
-    glPushMatrix();
-    glBegin(GL_POLYGON);
-    if (!isNight) glColor3ub(115,160,228);
-    else          glColor3ub(15,20,60);
-    glVertex2f(XMAX, 3.0f);
-    glVertex2f(XMAX, YMAX);
-    glVertex2f(XMIN, YMAX);
-    glVertex2f(XMIN, 3.0f);
-    glEnd();
-    glPopMatrix();
+    // 2D world coordinates
+    gluOrtho2D(-1000,1000,-1000,1000);
+    glMatrixMode(GL_MODELVIEW);
 
-    // 2) SUN / MOON
-    glPushMatrix();
-    if (!isNight) {
-        glColor3ub(255,80,60);
-        drawCircle2D(30.0f, 7.0f, 1.0f, 40);
-    } else {
-        glColor3ub(240,240,240);
-        drawCircle2D(30.0f, 9.0f, 0.9f, 40);
-        glColor3ub(15,20,60);
-        drawCircle2D(30.35f, 9.15f, 0.75f, 40);
+    /* ============================== SKY =================================== */
+   glBegin(GL_QUADS);
+    if (isNight)
+        glColor3ub(20,25,55);
+    else
+        glColor3ub(115,160,228);
+
+    glVertex2f(-1000.0f,500.0f);
+    glVertex2f(1000.0f,500.0f);
+    glVertex2f(1000.0f,1000.0f);
+    glVertex2f(-1000.0f,1000.0f);
+glEnd();
+
+    // Stars (night)
+    if (isNight) {
+        glPointSize(2.0f);
+        glColor3ub(235,235,250);
+        glBegin(GL_POINTS);
+            for (size_t i=0;i<sizeof(STAR_POS)/sizeof(STAR_POS[0]);++i)
+                glVertex2f(STAR_POS[i][0], STAR_POS[i][1]);
+        glEnd();
+        glPointSize(1.0f);          // ✅ ADD THIS
+
     }
-    glPopMatrix();
 
-    // 3) CLOUDS (move together)
-    unsigned char cR = isNight ? 210 : 255;
-    unsigned char cG = isNight ? 210 : 255;
-    unsigned char cB = isNight ? 210 : 255;
 
+
+    /* ============================ SUN / MOON ============================== */
+   // drawSky(); এর পরে দাও
+
+
+
+
+if (!isNight) {
     glPushMatrix();
-    glTranslatef(moveC, 0.0f, 0.0f);
-    drawCloudCluster(1.2f,  6.5f, 0.6f,  cR,cG,cB);
-    drawCloudCluster(15.5f, 8.6f, 0.65f, cR,cG,cB);
-    drawCloudCluster(22.8f, 7.6f, 0.62f, cR,cG,cB);
-    glPopMatrix();
+       float sunX = 700.0f, sunY = 900.0f, sunR = 60.0f;
 
-    // 4) KITES
-    drawKiteSway(36.2f, 10.8f, 0.70f, 0.90f, 220,40,50,
-                 37.3f,9.0f,  37.8f,8.0f,  255,220,80,  0.0f);
+    glColor3ub(255, 140, 0);
+    drawCircle2D(700, 900, 60);
+    //drawSolidCircle2D(sunX, sunY, sunR);
 
-    drawKiteSway(34.8f, 11.6f, 0.60f, 0.78f, 40,170,75,
-                 36.0f,10.2f, 36.6f,9.6f, 255,150,70,  1.4f);
-
-    drawKiteSway(36.9f,  9.2f, 0.55f, 0.70f, 60,120,240,
-                 37.7f,8.3f,  38.1f,7.6f, 255,210,120, 2.6f);
-
-    // 5) SEA
-    glPushMatrix();
-    glBegin(GL_POLYGON);
-    if (!isNight) glColor3ub(65,105,225);
-    else          glColor3ub(20,50,110);
-    glVertex2f(38.0f,-19.0f);
-    glVertex2f(38.0f,-10.0f);
-    glVertex2f(-12.0f,-7.0f);
-    glVertex2f(-12.0f,-19.0f);
+  /*  // optional outline
+    glColor3ub(255, 80, 0);
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 120; i++) {
+            float a = 2.0f * 3.1415926f * i / 120.0f;
+            glVertex2f(sunX + sunR * cosf(a), sunY + sunR * sinf(a));
+        }*/
     glEnd();
     glPopMatrix();
-
-    // 6) WATER BANDS (no oval marks)
-    drawWaterBands();
-
-    // 7) GROUND
+} else {
     glPushMatrix();
-    glBegin(GL_POLYGON);
-    if (!isNight) glColor3ub(25,128,0);
-    else          glColor3ub(10,70,10);
-    glVertex2f(1.0f, -8.0f);
-    glVertex2f(38.0f,-12.0f);
-    glVertex2f(38.0f, 3.0f);
-    glVertex2f(-12.0f,3.0f);
-    glVertex2f(-12.0f,-11.0f);
-    glEnd();
+        float moonX = 700.0f, moonY = 700.0f, moonR = 55.0f;
+
+    // main moon
+    glColor3ub(235, 235, 245);
+    drawSolidCircle2D(moonX, moonY, moonR);
+
+    // crescent cut (night sky color ধরলাম 20,25,55)
+    glColor3ub(20, 25, 55);
+    drawSolidCircle2D(moonX + moonR*0.35f, moonY + moonR*0.10f, moonR);
+    glPopMatrix();
+}
+//glDisable(GL_DEPTH_TEST);
+//glEnable(GL_DEPTH_TEST); // যদি আগে enable করে থাকো
+
+
+
+
+    /* ============================= CLOUDS ================================= */
+
+//glDisable(GL_DEPTH_TEST);
+
+// cloud group 1
+ glPushMatrix();
+drawCloudGroup(moveC - 500.0f, 780.0f, 1.0f);
+ glPopMatrix();
+
+// cloud group 2
+glPushMatrix();
+drawCloudGroup(moveC + 200.0f, 850.0f, 0.8f);
+ glPopMatrix();
+
+//glEnable(GL_DEPTH_TEST);
+
+
+
+
+    /* ============================== BIRDS ================================= */
+    {
+        float bob = 5.0f * sinf(birdsPhase);
+        drawBirdV(birdsX + 0.0f,  birdsY + bob - 20.0f, 0.75f);
+        drawBirdV(birdsX + 10.0f,  birdsY + bob - 0.0f, 0.65f);
+        drawBirdV(birdsX - 20.0f,  birdsY + bob + 100.0f, 0.60f);
+    }
+
+    /* ============================== KITES ================================= */
+    // Kite #1 (red)
+
+    // Kite 1 (RED)
+
+
+if (!isNight) {
+    glPushMatrix();
+
+    //kite 1
+glBegin(GL_TRIANGLES);
+    glColor3ub(220,40,50);
+
+    // right half
+    glVertex2f((640 + kiteX) * kiteScale, (900) * kiteScale + kiteY);  // top
+    glVertex2f((670 + kiteX) * kiteScale, (870) * kiteScale + kiteY);  // right
+    glVertex2f((640 + kiteX) * kiteScale, (840) * kiteScale + kiteY);  // bottom
+
+    // left half
+    glVertex2f((640 + kiteX) * kiteScale, (840) * kiteScale + kiteY);  // bottom
+    glVertex2f((610 + kiteX) * kiteScale, (870) * kiteScale + kiteY);  // left
+    glVertex2f((640 + kiteX) * kiteScale, (900) * kiteScale + kiteY);  // top
+glEnd();
+
+// cross
+glColor3ub(20,20,20);
+glLineWidth(1.0f);
+glBegin(GL_LINES);
+    glVertex2f((610 + kiteX) * kiteScale, (870) * kiteScale + kiteY);
+    glVertex2f((670 + kiteX) * kiteScale, (870) * kiteScale + kiteY);
+
+    glVertex2f((640 + kiteX) * kiteScale, (840) * kiteScale + kiteY);
+    glVertex2f((640 + kiteX) * kiteScale, (900) * kiteScale + kiteY);
+glEnd();
+
+// tail
+glLineWidth(2.5f);
+glBegin(GL_LINE_STRIP);
+    glVertex2f((640 + kiteX) * kiteScale, (840) * kiteScale + kiteY);
+    glVertex2f((625 + kiteX + 30) * kiteScale, (810) * kiteScale + kiteY); // 625+230 => +30 because kiteX already has 200
+    glVertex2f((615 + kiteX + 20) * kiteScale, (780) * kiteScale + kiteY); // 615+220 => +20
+glEnd();
+
+
+    //kite 2
+
+    glBegin(GL_TRIANGLES);
+    glColor3ub(220,40,50);
+    //right
+    glVertex2f(640+250, 900+30);   // top
+    glVertex2f(670+250, 870+30);   // right
+    glVertex2f(640+250, 840+30);   // bottom
+
+    //left
+    glVertex2f(640+250, 840+30);
+    glVertex2f(610+250, 870+30);   // left
+    glVertex2f(640+250, 900+30);
+glEnd();
+
+// cross
+glColor3ub(20,20,20);
+glLineWidth(1.0f);
+glBegin(GL_LINES);
+    glVertex2f(610+250,870+30);
+     glVertex2f(670+250,870+30);
+    glVertex2f(640+250,840+30);
+     glVertex2f(640+250,900+30);
+glEnd();
+
+// tail
+glLineWidth(2.5f);
+glBegin(GL_LINE_STRIP);
+    glVertex2f(640+250,840+30);
+    glVertex2f(625+260,810+30);
+    glVertex2f(615+250,780+30);
+glEnd();
     glPopMatrix();
 
-    // 8) VERTICAL ROAD
-    glPushMatrix();
-    glBegin(GL_POLYGON);
-    glColor3ub(72,72,76);
-    glVertex2f(6.0f,-8.6f);
-    glVertex2f(6.0f,3.0f);
-    glVertex2f(5.2f,3.0f);
-    glVertex2f(2.0f,-8.2f);
-    glEnd();
+    }
 
-    glBegin(GL_POLYGON);
-    glColor3ub(255,255,255);
-    glVertex2f(4.2f,-8.5f);
-    glVertex2f(5.6f,3.0f);
-    glVertex2f(5.5f,3.0f);
-    glVertex2f(4.0f,-8.4f);
-    glEnd();
+
+    /* ========================= WATER + GROUND ======================= */
+    glPushMatrix();
+            // Ground
+        glBegin(GL_POLYGON);
+            if (isNight)
+            glColor3ub(18,90,0);
+
+                else
+                     glColor3ub(25,128,0);
+
+            glVertex2f(-1000.0f, -700.0f);
+            glVertex2f(-100.0f,-200.0f);
+            glVertex2f(1000.0f,-700.0f);
+            glVertex2f(1000.0f,500.0f);
+            glVertex2f(-1000.0f,500.0f);
+        glEnd();
+
+        // water
+        glBegin(GL_POLYGON);
+            if (isNight)
+                glColor3ub(40,70,140);
+                else
+               glColor3ub(65,105,225);
+            glVertex2f(-1000.0f, -1000.0f);
+            glVertex2f(1000.0f,-1000.0f);
+            glVertex2f(1000.0f,-400.0f);
+            glVertex2f(-100.0f,-200.0f);
+            glVertex2f(-1000.0f,-700.0f);
+        glEnd();
+
+        /* ============================= FENCE ============================== */
+
+{
+    // original (logical) coordinates — unchanged
+    float Lx = -1000.0f, Ly = -90.0f;
+    float Rx =  1000.0f, Ry = -300.0f;
+
+    int   N      = 40;
+    float postW  = 10.0f;
+    float postH  = 100.0f;
+    float rail1  = 80.0f;
+    float rail2  = 20.00f;
+
+    glPushMatrix();
+
+
+
+        glColor3ub(101, 67, 33);
+
+        // fence posts
+        for (int i = 0; i <= N; ++i)
+        {
+            float t = i / (float)N;
+            float x = Lx + (Rx - Lx) * t;  // Linear Interpolation (LERP) for x and y..Rx-Lx = 38 - (-12) = 50 (ডানে মোট 50 ইউনিট যাবে)
+            float y = Ly + (Ry - Ly) * t; //Ry-Ly = -10 - (-7) = -3 (নিচে মোট 3 ইউনিট নামবে)
+
+            glBegin(GL_QUADS);
+                glVertex2f(x - postW * 0.5f, y);
+                glVertex2f(x + postW * 0.5f, y);
+                glVertex2f(x + postW * 0.5f, y + postH);
+                glVertex2f(x - postW * 0.5f, y + postH);
+            glEnd();
+        }
+
+        // rails
+        glLineWidth(3.0f);
+
+        glBegin(GL_LINE_STRIP);
+            for (int i = 0; i <= N; i++) {
+                float t = i / (float)N;
+                float x = Lx + (Rx - Lx) * t;
+                float y = Ly + (Ry - Ly) * t + rail1;
+                glVertex2f(x, y);
+            }
+        glEnd();
+
+        glBegin(GL_LINE_STRIP);
+            for (int i = 0; i <= N; i++) {
+                float t = i / (float)N;
+                float x = Lx + (Rx - Lx) * t;
+                float y = Ly + (Ry - Ly) * t + rail2;
+                glVertex2f(x, y);
+            }
+        glEnd();
+
     glPopMatrix();
+}
 
-    // 9) BUS ROAD + 10) BUS
-    drawBusRoad();
-    drawBus();
 
-    // 11) STALLS
-    drawStall(17.20f, 19.00f, 210,35,45);
-    drawStall(19.25f, 21.05f, 40,170,75);
-    drawStall(21.30f, 23.10f, 240,120,30);
-    drawStall(23.35f, 24.95f, 60,120,240);
+/* ============================== ROAD ============================== */
 
-    // 12) BOAT + BOATMAN (moving)
-    glPushMatrix();
+
+float roadBottomY = -220.0f;
+float roadBottomY1 = -180.0f;
+float roadBottomY2 = -260.0f;
+
+float roadTopY    =  500.0f;
+
+float roadHalfBottom = 420.0f; // bottom width/2  (bigger)
+float roadHalfTop    = 110.0f; // top width/2     (smaller, perspective)
+
+
+
+glColor3ub(70, 70, 85);
+glBegin(GL_QUADS);
+    glVertex2f(-roadHalfBottom*0.25f, roadBottomY1);
+    glVertex2f( roadHalfBottom*0.25f, roadBottomY2);
+    glVertex2f( roadHalfTop*0.25f,    roadTopY);
+    glVertex2f(-roadHalfTop*0.25f,    roadTopY);
+glEnd();
+
+
+
+// --- center dashed line (simple dashed) ---
+glLineWidth(3.0f);
+glColor3ub(255, 220, 0);
+for (int i = 0; i < 18; ++i) {
+    float t0 = i / 18.0f;
+    float t1 = (i + 0.45f) / 18.0f; // dash length
+
+    float y0 = roadBottomY + (roadTopY - roadBottomY) * t0;
+    float y1 = roadBottomY + (roadTopY - roadBottomY) * t1;
+
+    glBegin(GL_LINES);
+        glVertex2f(0.0f, y0);
+        glVertex2f(0.0f, y1);
+    glEnd();
+}
+
+
+
+
+
+
+/* ============================ LEFT HOUSE 1 ========================== */
+// 1️⃣ আগে উপরে তুলছি
+glTranslatef(100.0f, 300.0f, 0.0f);
+
+// 2️⃣ তারপর scaling
+glScalef(1.15f, 1.15f, 1.0f);
+// roof front
+glBegin(GL_POLYGON);
+glColor3ub(139,69,19);
+    glVertex2f(-520, 140);
+    glVertex2f(-760, 140);
+    glVertex2f(-650,  20);
+    glVertex2f(-420,  20);
+glEnd();
+
+// roof left side
+glBegin(GL_POLYGON);
+glColor3ub(139,69,19);
+    glVertex2f(-740, 120);
+    glVertex2f(-760, 140);
+    glVertex2f(-880,  20);
+    glVertex2f(-840,  20);
+glEnd();
+
+// main wall
+glBegin(GL_POLYGON);
+glColor3ub(205,133,63);
+    glVertex2f(-740, 120);
+    glVertex2f(-840,  20);
+    glVertex2f(-840, -160);
+    glVertex2f(-650, -200);
+    glVertex2f(-650,  20);
+glEnd();
+
+// window
+glBegin(GL_POLYGON);
+glColor3ub(128,135,32);
+    glVertex2f(-700,  -80);
+    glVertex2f(-700,   20);
+    glVertex2f(-760,   20);
+    glVertex2f(-760,  -80);
+glEnd();
+
+// roof bottom edge
+glBegin(GL_POLYGON);
+glColor3ub(139,69,19);
+    glVertex2f(-650, -200);
+    glVertex2f(-840, -160);
+    glVertex2f(-870, -190);
+    glVertex2f(-650, -230);
+glEnd();
+
+// front wall
+glBegin(GL_POLYGON);
+glColor3ub(184,134,11);
+    glVertex2f(-420, -200);
+    glVertex2f(-420,   20);
+    glVertex2f(-650,   20);
+    glVertex2f(-650, -200);
+glEnd();
+
+// base slab
+glBegin(GL_POLYGON);
+glColor3ub(139,69,19);
+    glVertex2f(-650, -200);
+    glVertex2f(-650, -240);
+    glVertex2f(-420, -240);
+    glVertex2f(-460, -200);
+glEnd();
+
+// door frame
+glBegin(GL_POLYGON);
+glColor3ub(0,0,0);
+    glVertex2f(-520, -200);
+    glVertex2f(-520,  -40);
+    glVertex2f(-600,  -40);
+    glVertex2f(-600, -200);
+glEnd();
+
+// left door
+glBegin(GL_POLYGON);
+glColor3ub(128,135,32);
+    glVertex2f(-560, -200);
+    glVertex2f(-560,  -60);
+    glVertex2f(-600,  -40);
+    glVertex2f(-600, -200);
+glEnd();
+
+// right door
+glBegin(GL_POLYGON);
+glColor3ub(128,135,32);
+    glVertex2f(-520, -200);
+    glVertex2f(-520,  -40);
+    glVertex2f(-560,  -60);
+    glVertex2f(-560, -200);
+glEnd();
+
+glPopMatrix();
+
+
+
+
+        /* ============================== HILLS ============================= */
+       //Hills 1
+        glBegin(GL_TRIANGLES);
+        glColor3ub(0,100,0);
+            glVertex2f(-1000.0,500.0);
+            glVertex2f(-550.0,500.0);
+            glVertex2f(-800.0,800.0);
+        glEnd();
+
+         //Hill 2
+        glBegin(GL_POLYGON);
+        glColor3ub(0,100,0);
+            glVertex2f(-550.0,500.0);
+            glVertex2f(-550,700);
+            glVertex2f(-450,800);
+            glVertex2f(-350,850);
+            glVertex2f(-200,800);
+            glVertex2f(-50,700);
+            glVertex2f(-50,500);
+        glEnd();
+
+        //Hill 3
+        glBegin(GL_POLYGON);
+        glColor3ub(0,100,0);
+          glVertex2f(160.0,500.0);
+            glVertex2f(250,590);
+            glVertex2f(300,650);
+            glVertex2f(350,690);
+            glVertex2f(450,650);
+            glVertex2f(490,600);
+            glVertex2f(540,500);
+        glEnd();
+
+         //Hill 4
+        glBegin(GL_TRIANGLES);
+         glColor3ub(0,100,0);
+            glVertex2f(50,500);
+             glVertex2f(145,650);
+              glVertex2f(560,500);
+        glEnd();
+
+         //Hill 5
+        glBegin(GL_TRIANGLES);
+        glColor3ub(0,100,0);
+            glVertex2f(520,500);
+            glVertex2f(620,650);
+            glVertex2f(720,500);
+        glEnd();
+
+        // Hill 6
+        glBegin(GL_TRIANGLES);
+        glColor3ub(0,100,0);
+            glVertex2f(720,500);
+            glVertex2f(820,800);
+            glVertex2f(920,500);
+        glEnd();
+
+        //Hill 7
+           glBegin(GL_TRIANGLES);
+        glColor3ub(0,100,0);
+            glVertex2f(820,500);
+            glVertex2f(950,650);
+            glVertex2f(1000,500);
+        glEnd();
+
+/* ============================ LEFT HOUSE (SMALL, UPPER) ========================== */
+glPushMatrix();
+glTranslatef(200.0f, 650.0f, 0.0f);
+
+// 🔹 ছোট করলাম
+glScalef(0.85f, 0.85f, 1.0f);
+
+// roof front
+glBegin(GL_POLYGON);
+glColor3ub(139,69,19);
+    glVertex2f(-520, 140);
+    glVertex2f(-760, 140);
+    glVertex2f(-650,  20);
+    glVertex2f(-420,  20);
+glEnd();
+
+// roof left side
+glBegin(GL_POLYGON);
+glColor3ub(139,69,19);
+    glVertex2f(-740, 120);
+    glVertex2f(-760, 140);
+    glVertex2f(-880,  20);
+    glVertex2f(-840,  20);
+glEnd();
+
+// main wall
+glBegin(GL_POLYGON);
+glColor3ub(205,133,63);
+    glVertex2f(-740, 120);
+    glVertex2f(-840,  20);
+    glVertex2f(-840, -160);
+    glVertex2f(-650, -200);
+    glVertex2f(-650,  20);
+glEnd();
+
+// window
+glBegin(GL_POLYGON);
+glColor3ub(128,135,32);
+    glVertex2f(-700,  -80);
+    glVertex2f(-700,   20);
+    glVertex2f(-760,   20);
+    glVertex2f(-760,  -80);
+glEnd();
+
+// roof bottom edge
+glBegin(GL_POLYGON);
+glColor3ub(139,69,19);
+    glVertex2f(-650, -200);
+    glVertex2f(-840, -160);
+    glVertex2f(-870, -190);
+    glVertex2f(-650, -230);
+glEnd();
+
+// front wall
+glBegin(GL_POLYGON);
+glColor3ub(184,134,11);
+    glVertex2f(-420, -200);
+    glVertex2f(-420,   20);
+    glVertex2f(-650,   20);
+    glVertex2f(-650, -200);
+glEnd();
+
+// base slab
+glBegin(GL_POLYGON);
+glColor3ub(139,69,19);
+    glVertex2f(-650, -200);
+    glVertex2f(-650, -240);
+    glVertex2f(-420, -240);
+    glVertex2f(-460, -200);
+glEnd();
+
+// door frame
+glBegin(GL_POLYGON);
+glColor3ub(0,0,0);
+    glVertex2f(-520, -200);
+    glVertex2f(-520,  -40);
+    glVertex2f(-600,  -40);
+    glVertex2f(-600, -200);
+glEnd();
+
+// left door
+glBegin(GL_POLYGON);
+glColor3ub(128,135,32);
+    glVertex2f(-560, -200);
+    glVertex2f(-560,  -60);
+    glVertex2f(-600,  -40);
+    glVertex2f(-600, -200);
+glEnd();
+
+// right door
+glBegin(GL_POLYGON);
+glColor3ub(128,135,32);
+    glVertex2f(-520, -200);
+    glVertex2f(-520,  -40);
+    glVertex2f(-560,  -60);
+    glVertex2f(-560, -200);
+glEnd();
+
+glPopMatrix();
+        /* ======================== TWO FERRIS WHEELS ======================= */         // default
+glPushMatrix();
+
+//ferriwheel1
+ferrisWheel1(150, 700);
+
+//ferriwheel2
+ferrisWheel2(500, 700);
+glPopMatrix();
+
+        /* ====================== STALLS + PEOPLE ROWS ====================== */
+        drawBengaliCrowd(27.8f, -6.5f, 0.95f, 1.15f, 8);
+        drawFairStall(750.0f, -100.0f, 1.5f);
+
+        drawBengaliCrowd(16.5f, -6.5f, 0.95f, 1.15f, 8);
+        //drawFairStall(200.0f, 300.0f, 1.5f);
+
+        // Big standing group (6 people, larger)
+        {
+            float bx[6] = {12.00f, 12.90f, 13.80f, 14.70f, 15.30f, 15.50f};
+            float gy = 0.40f;
+            for (int i = 0; i < 6; ++i)
+            {
+                float x = bx[i];
+                float headR=0.30f, headY=2.10f, shoulder=1.80f, waist=1.10f, armY=1.65f;
+
+                glPushMatrix(); glColor3ub(245,222,179); glTranslatef(x, headY, 0.0f); glutSolidSphere(headR, 18, 18); glPopMatrix();
+                bool woman = (i % 2 == 1);
+
+                if (woman)
+                {
+                    glBegin(GL_TRIANGLES); glColor3ub(230,60,120);
+                        glVertex2f(x, shoulder); glVertex2f(x - 0.65f, gy); glVertex2f(x + 0.65f, gy);
+                    glEnd();
+                    glBegin(GL_QUADS); glColor3ub(255,170,30);
+                        glVertex2f(x - 0.30f, shoulder); glVertex2f(x + 0.30f, shoulder); glVertex2f(x + 0.30f, waist); glVertex2f(x - 0.30f, waist);
+                    glEnd();
+                    glLineWidth(2.0f); glColor3ub(255,255,255);
+                    glBegin(GL_LINES); glVertex2f(x - 0.34f, armY + 0.02f); glVertex2f(x + 0.34f, armY - 0.06f); glEnd();
+                    glLineWidth(3.0f); glColor3ub(120,85,40);
+                    glBegin(GL_LINES); glVertex2f(x - 0.20f, armY); glVertex2f(x - 0.20f, 0.86f); glEnd();
+                    glBegin(GL_LINES); glVertex2f(x + 0.20f, armY); glVertex2f(x + 0.20f, 0.86f); glEnd();
+                    glLineWidth(5.0f); glColor3ub(60,60,60);
+                    glBegin(GL_LINES); glVertex2f(x - 0.18f, gy); glVertex2f(x + 0.18f, gy); glEnd();
+                }
+                else
+                {
+                    glBegin(GL_QUADS); glColor3ub(40,160,90);
+                        glVertex2f(x - 0.34f, shoulder); glVertex2f(x + 0.34f, shoulder);
+                        glVertex2f(x + 0.34f, waist);    glVertex2f(x - 0.34f, waist);
+                    glEnd();
+                    glLineWidth(4.0f); glColor3ub(200,200,200);
+                    glBegin(GL_LINES); glVertex2f(x - 0.14f, waist); glVertex2f(x - 0.14f, gy); glEnd();
+                    glBegin(GL_LINES); glVertex2f(x + 0.14f, waist); glVertex2f(x + 0.14f, gy); glEnd();
+                    glLineWidth(3.0f); glColor3ub(120,85,40);
+                    glBegin(GL_LINES); glVertex2f(x - 0.22f, armY); glVertex2f(x - 0.22f, 0.90f); glEnd();
+                    glBegin(GL_LINES); glVertex2f(x + 0.22f, armY); glVertex2f(x + 0.22f, 0.90f); glEnd();
+                    glLineWidth(5.0f); glColor3ub(60,60,60);
+                    glBegin(GL_LINES); glVertex2f(x - 0.18f, gy); glVertex2f(x + 0.18f, gy); glEnd();
+                }
+            }
+        }
+
+        // Four wider tent stalls (S1..S4)
+        // S1
+        glBegin(GL_QUADS); glColor3ub(240,238,220);
+            glVertex2f(17.20f,0.10f); glVertex2f(19.00f,0.10f); glVertex2f(19.00f,3.40f); glVertex2f(17.20f,3.40f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(120,85,40);
+            glVertex2f(17.20f,0.10f); glVertex2f(17.32f,0.10f); glVertex2f(17.32f,3.70f); glVertex2f(17.20f,3.70f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(120,85,40);
+            glVertex2f(18.88f,0.10f); glVertex2f(19.00f,0.10f); glVertex2f(19.00f,3.70f); glVertex2f(18.88f,3.70f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(210,160,90);
+            glVertex2f(17.38f,1.20f); glVertex2f(18.82f,1.20f); glVertex2f(18.82f,1.90f); glVertex2f(17.38f,1.90f);
+        glEnd();
+        glBegin(GL_TRIANGLES); glColor3ub(210,35,45);
+            glVertex2f(17.20f,3.70f); glVertex2f(18.10f,4.40f); glVertex2f(18.10f,3.70f);
+        glEnd();
+        glBegin(GL_TRIANGLES); glColor3ub(210,35,45);
+            glVertex2f(18.10f,3.70f); glVertex2f(19.00f,3.70f); glVertex2f(18.10f,4.40f);
+        glEnd();
+        glLineWidth(4.0f); glColor3ub(120,85,40);
+        glBegin(GL_LINES); glVertex2f(17.20f,3.70f); glVertex2f(19.00f,3.70f); glEnd();
+
+        // S2
+        glBegin(GL_QUADS); glColor3ub(240,238,220);
+            glVertex2f(19.25f,0.10f); glVertex2f(21.05f,0.10f); glVertex2f(21.05f,3.40f); glVertex2f(19.25f,3.40f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(120,85,40);
+            glVertex2f(19.25f,0.10f); glVertex2f(19.37f,0.10f); glVertex2f(19.37f,3.70f); glVertex2f(19.25f,3.70f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(120,85,40);
+            glVertex2f(20.93f,0.10f); glVertex2f(21.05f,0.10f); glVertex2f(21.05f,3.70f); glVertex2f(20.93f,3.70f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(210,160,90);
+            glVertex2f(19.43f,1.20f); glVertex2f(20.87f,1.20f); glVertex2f(20.87f,1.90f); glVertex2f(19.43f,1.90f);
+        glEnd();
+        glBegin(GL_TRIANGLES); glColor3ub(40,170,75);
+            glVertex2f(19.25f,3.70f); glVertex2f(20.15f,4.40f); glVertex2f(20.15f,3.70f);
+        glEnd();
+        glBegin(GL_TRIANGLES); glColor3ub(40,170,75);
+            glVertex2f(20.15f,3.70f); glVertex2f(21.05f,3.70f); glVertex2f(20.15f,4.40f);
+        glEnd();
+        glLineWidth(4.0f); glColor3ub(120,85,40);
+        glBegin(GL_LINES); glVertex2f(19.25f,3.70f); glVertex2f(21.05f,3.70f); glEnd();
+
+        // S3
+        glBegin(GL_QUADS); glColor3ub(240,238,220);
+            glVertex2f(21.30f,0.10f); glVertex2f(23.10f,0.10f); glVertex2f(23.10f,3.40f); glVertex2f(21.30f,3.40f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(120,85,40);
+            glVertex2f(21.30f,0.10f); glVertex2f(21.42f,0.10f); glVertex2f(21.42f,3.70f); glVertex2f(21.30f,3.70f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(120,85,40);
+            glVertex2f(22.98f,0.10f); glVertex2f(23.10f,0.10f); glVertex2f(23.10f,3.70f); glVertex2f(22.98f,3.70f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(210,160,90);
+            glVertex2f(21.48f,1.20f); glVertex2f(22.92f,1.20f); glVertex2f(22.92f,1.90f); glVertex2f(21.48f,1.90f);
+        glEnd();
+        glBegin(GL_TRIANGLES); glColor3ub(240,120,30);
+            glVertex2f(21.30f,3.70f); glVertex2f(22.20f,4.40f); glVertex2f(22.20f,3.70f);
+        glEnd();
+        glBegin(GL_TRIANGLES); glColor3ub(240,120,30);
+            glVertex2f(22.20f,3.70f); glVertex2f(23.10f,3.70f); glVertex2f(22.20f,4.40f);
+        glEnd();
+        glLineWidth(4.0f); glColor3ub(120,85,40);
+        glBegin(GL_LINES); glVertex2f(21.30f,3.70f); glVertex2f(23.10f,3.70f); glEnd();
+
+        // S4
+        glBegin(GL_QUADS); glColor3ub(240,238,220);
+            glVertex2f(23.35f,0.10f); glVertex2f(24.95f,0.10f); glVertex2f(24.95f,3.40f); glVertex2f(23.35f,3.40f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(120,85,40);
+            glVertex2f(23.35f,0.10f); glVertex2f(23.47f,0.10f); glVertex2f(23.47f,3.70f); glVertex2f(23.35f,3.70f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(120,85,40);
+            glVertex2f(24.83f,0.10f); glVertex2f(24.95f,0.10f); glVertex2f(24.95f,3.70f); glVertex2f(24.83f,3.70f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(210,160,90);
+            glVertex2f(23.53f,1.20f); glVertex2f(24.77f,1.20f); glVertex2f(24.77f,1.90f); glVertex2f(23.53f,1.90f);
+        glEnd();
+        glBegin(GL_TRIANGLES); glColor3ub(60,120,240);
+            glVertex2f(23.35f,3.70f); glVertex2f(24.15f,4.40f); glVertex2f(24.15f,3.70f);
+        glEnd();
+        glBegin(GL_TRIANGLES); glColor3ub(60,120,240);
+            glVertex2f(24.15f,3.70f); glVertex2f(24.95f,3.70f); glVertex2f(24.15f,4.40f);
+        glEnd();
+        glLineWidth(4.0f); glColor3ub(120,85,40);
+        glBegin(GL_LINES); glVertex2f(23.35f,3.70f); glVertex2f(24.95f,3.70f); glEnd();
+
+        /* ============================ BALLOONS ============================ */
+        glBegin(GL_QUADS); glColor3ub(150,105,55);
+            glVertex2f(16.15f, 0.10f); glVertex2f(16.45f, 0.10f); glVertex2f(16.45f, 0.35f); glVertex2f(16.15f, 0.35f);
+        glEnd();
+        glBegin(GL_QUADS); glColor3ub(120,85,40);
+            glVertex2f(16.12f, 0.35f); glVertex2f(16.48f, 0.35f); glVertex2f(16.48f, 0.41f); glVertex2f(16.12f, 0.41f);
+        glEnd();
+        glPushMatrix(); glColor3ub(60,45,30); glTranslatef(16.30f, 0.42f, 0.0f); glutSolidSphere(0.04, 16, 16); glPopMatrix();
+
+        glLineWidth(1.0f); glColor3ub(40,40,40);
+        glBegin(GL_LINES); glVertex2f(16.30f, 0.42f); glVertex2f(15.70f, 3.70f); glEnd();
+        glBegin(GL_LINES); glVertex2f(16.30f, 0.42f); glVertex2f(16.10f, 3.95f); glEnd();
+        glBegin(GL_LINES); glVertex2f(16.30f, 0.42f); glVertex2f(16.50f, 3.65f); glEnd();
+        glBegin(GL_LINES); glVertex2f(16.30f, 0.42f); glVertex2f(15.85f, 3.30f); glEnd();
+        glBegin(GL_LINES); glVertex2f(16.30f, 0.42f); glVertex2f(16.25f, 3.35f); glEnd();
+        glBegin(GL_LINES); glVertex2f(16.30f, 0.42f); glVertex2f(16.65f, 3.30f); glEnd();
+
+        glPushMatrix(); glColor3ub(230,40,70);  glTranslatef(15.70f, 3.70f, 0.0f); glutSolidSphere(0.30, 24, 24); glPopMatrix();
+        glPushMatrix(); glColor3ub(255,160,0);  glTranslatef(16.10f, 3.95f, 0.0f); glutSolidSphere(0.28, 24, 24); glPopMatrix();
+        glPushMatrix(); glColor3ub(255,215,0);  glTranslatef(16.50f, 3.65f, 0.0f); glutSolidSphere(0.27, 24, 24); glPopMatrix();
+        glPushMatrix(); glColor3ub(35,160,85);  glTranslatef(15.85f, 3.30f, 0.0f); glutSolidSphere(0.26, 24, 24); glPopMatrix();
+        glPushMatrix(); glColor3ub(70,130,255); glTranslatef(16.25f, 3.35f, 0.0f); glutSolidSphere(0.26, 24, 24); glPopMatrix();
+        glPushMatrix(); glColor3ub(190,90,210); glTranslatef(16.65f, 3.30f, 0.0f); glutSolidSphere(0.25, 24, 24); glPopMatrix();
+
+/* ============================== TREES ============================= */
+drawTreeCloudTop(-950.0f, 340.0f, 1.0f);   // big
+drawTreeCloudTop(-630.0f, 680.0f, 0.85f);  // slightly smaller
+
+
+// canopies (left cluster)
+
+/* ============================== BOATS ============================= */
+
+        // ================= BOAT 1 =================
+glPushMatrix();
     glTranslatef(moveB1, 0.0f, 0.0f);
-    drawBoat();
-    drawBoatman(-0.9f, -13.25f, 1.2f);
-    glPopMatrix();
 
-    // 13) MIDDLE AXES
-    drawMiddleAxes();
+    // hull
+    glBegin(GL_QUADS);
+        glColor3ub(139,69,19);
+        glVertex2f(-400, -520);
+        glVertex2f(-360, -480);
+        glVertex2f(-520, -480);
+        glVertex2f(-560, -520);
+    glEnd();
+
+    // base
+    glBegin(GL_QUADS);
+        glColor3ub(0,0,0);
+        glVertex2f(-350, -540);
+        glVertex2f(-350, -520);
+        glVertex2f(-560, -520);
+        glVertex2f(-560, -540);
+    glEnd();
+
+    // front tip
+    glBegin(GL_TRIANGLES);
+        glColor3ub(0,0,0);
+        glVertex2f(-560, -540);
+        glVertex2f(-560, -520);
+        glVertex2f(-600, -500);
+    glEnd();
+
+    glBegin(GL_TRIANGLES);
+        glVertex2f(-350, -540);
+        glVertex2f(-300, -500);
+        glVertex2f(-350, -520);
+    glEnd();
+glPopMatrix();
+
+        // ================= BOAT 2 =================
+glPushMatrix();
+    glTranslatef(moveB2, 0.0f, 0.0f);
+
+    // hull
+    glBegin(GL_QUADS);
+        glColor3ub(139,69,19);
+        glVertex2f(420, -600);
+        glVertex2f(380, -560);
+        glVertex2f(240, -560);
+        glVertex2f(280, -600);
+    glEnd();
+
+    // base
+    glBegin(GL_QUADS);
+        glColor3ub(0,0,0);
+        glVertex2f(420, -620);
+        glVertex2f(420, -600);
+        glVertex2f(240, -600);
+        glVertex2f(240, -620);
+    glEnd();
+
+    // mast
+    glBegin(GL_QUADS);
+        glColor3ub(139,69,19);
+        glVertex2f(330, -560);
+        glVertex2f(335, -560);
+        glVertex2f(335, -480);
+        glVertex2f(330, -480);
+    glEnd();
+
+    // sail
+    glBegin(GL_TRIANGLES);
+        glColor3ub(255,235,205);
+        glVertex2f(332, -480);
+        glVertex2f(420, -560);
+        glVertex2f(332, -620);
+    glEnd();
+glPopMatrix();
+
+
+
+
+// ================= GHAT (near Boat-3) =================
+
+// main platform
+glBegin(GL_QUADS);
+    glColor3ub(160, 110, 60);   // wood color
+    glVertex2f(-900, -460);
+    glVertex2f(-600, -460);
+    glVertex2f(-600, -430);
+    glVertex2f(-900, -430);
+glEnd();
+
+// front edge shadow
+glBegin(GL_QUADS);
+    glColor3ub(120, 80, 40);
+    glVertex2f(-900, -460);
+    glVertex2f(-600, -460);
+    glVertex2f(-600, -470);
+    glVertex2f(-900, -470);
+glEnd();
+
+// wooden posts
+glColor3ub(110, 70, 30);
+for (int i = 0; i < 6; i++) {
+    float x = -880 + i * 60;
+    glBegin(GL_QUADS);
+        glVertex2f(x,     -470);
+        glVertex2f(x+10,  -470);
+        glVertex2f(x+10,  -520);
+        glVertex2f(x,     -520);
+    glEnd();
+}
+// ================= shade on ghat =================
+
+// vertical poles
+glColor3ub(120, 85, 40);
+glBegin(GL_QUADS);
+    // left pole
+    glVertex2f(-860, -430);
+    glVertex2f(-850, -430);
+    glVertex2f(-850, -330);
+    glVertex2f(-860, -330);
+
+    // right pole
+    glVertex2f(-640, -430);
+    glVertex2f(-630, -430);
+    glVertex2f(-630, -330);
+    glVertex2f(-640, -330);
+glEnd();
+
+// roof (triangle hut style)
+glBegin(GL_TRIANGLES);
+    glColor3ub(170, 50, 50);
+    glVertex2f(-900, -330);   // left
+    glVertex2f(-580, -330);   // right
+    glVertex2f(-740, -260);   // top
+glEnd();
+
+// roof border
+glLineWidth(4.0f);
+glColor3ub(90, 40, 30);
+glBegin(GL_LINES);
+    glVertex2f(-900, -330); glVertex2f(-580, -330);
+glEnd();
+
+
+        glPopMatrix();
+
+drawBoyGirlPair(400, 520);   // ২ জন একসাথে
+drawBoyGirlPair( 150, -520);   // আরেক জায়গায়
+// আরেকজন মানুষ
+
+
+    //glPopMatrix(); // end water/ground block
 
     glutSwapBuffers();
 }
 
-// ===================== GLUT callback: key =====================
-static void key(unsigned char k, int, int)
+// --------------------------- ANIMATION TIMERS -------------------------------
+void updateC(int) // clouds
 {
-    switch(k)
+
+    moveC += 2.0f;                 // speed (world unit)
+    if (moveC > 1200.0f)           // screen cross করলে reset
+        moveC = -1200.0f;
+
+    glutTimerFunc(20, updateC, 0);
+    glutPostRedisplay();
+
+
+}
+
+void updateB1(int) // boat-1 (uses 'speed')
+{
+    moveB1 += speed;
+    if (moveB1 > 1000) moveB1 = -700;
+    glutTimerFunc(20, updateB1, 0);
+    glutPostRedisplay();
+}
+
+void updateB2(int) // boat-2 (constant leftward)
+{
+    if (moveB2 < -700) moveB2 = 1000;
+    moveB2 -= 0.13f;
+    glutTimerFunc(20, updateB2, 0);
+    glutPostRedisplay();
+}
+
+void updateW(int) // Ferris wheels rotation
+{
+    if (wheelsRunning) {
+        wheelAngle1 -= 0.8f;
+        wheelAngle2 -= 1.2f;
+        if (wheelAngle1 <= -360.0f) wheelAngle1 += 360.0f;
+        if (wheelAngle2 <= -360.0f) wheelAngle2 += 360.0f;
+    }
+    glutTimerFunc(16, updateW, 0); // ~60 FPS
+    glutPostRedisplay();
+}
+
+void updateMoon(int) // Night moon rising animator
+{
+    if (isNight && moonRising) {
+        moonY += 0.03f;
+        if (moonY >= moonTargetY) { moonY = moonTargetY; moonRising = false; }
+        glutPostRedisplay();
+    }
+    glutTimerFunc(30, updateMoon, 0);
+}
+
+// --------------------------- INPUT HANDLERS ---------------------------------
+void handleKeypress(unsigned char key, int, int)
+{
+    switch (key)
     {
-        case 27:
-        case 'q':
-            exit(0);
 
-        case 'n': isNight = true;  break;
-        case 'd': isNight = false; break;
+        case 'x': wheelsRunning = false;
+         break; // stop wheels
 
-        // boat speed
-        case 's': speedBoat1 = 0.0f;  break;
-        case 'r': speedBoat1 = 0.02f; break;
-        case '+': speedBoat1 += 0.02f; break;
-        case '-': speedBoat1 -= 0.02f; break;
+        case 's': wheelsRunning = true;
+        break; // stop wheels
 
-        // bus control
-        case 'b': busRun = true;  break;
-        case 'p': busRun = false; break;
-        case 'i': busSpeed += 0.0015f; break;
-        case 'k': busSpeed -= 0.0015f; break;
+        case 'k': speed = 5.0f;
+        break; // start boat-1
+
+        case 'l': speed = 0.0f;
+        break; // stop  boat-1
+
+        case 'n': isNight = true;
+        moonRising = true;
+        break; // night + moon rise
+
+        case 'd': isNight = false;
+        moonRising = false;
+         break; // day
+          // move right
+
+        case 'L':
+            moveB1 += 100.0f;
+            break;
+
+           // move left
+        case 'R':
+            moveB1 -= 100.0f;
+            break;
+    }
+    glutPostRedisplay();
+}
+
+void handleSpecialKey(int key, int, int) // ←/→ to nudge boat-1
+{
+ switch (key)
+    {
+        case GLUT_KEY_LEFT:
+            kiteX -= 15.0f;
+            break;
+        case GLUT_KEY_RIGHT:
+            kiteX += 15.0f;
+            break;
+
+        case GLUT_KEY_UP:
+            kiteScale += 0.05f;   // zoom out (smaller)
+            kiteY     -= 20.0f;   // go up
+            break;
+
+        case GLUT_KEY_DOWN:
+            kiteScale -= 0.05f;   // zoom in (bigger)
+            kiteY     += 20.0f;   // go down
+
+
     }
 
-    speedBoat1 = clampf(speedBoat1, 0.0f, 0.50f);
-    busSpeed   = clampf(busSpeed,   0.0f, 0.03f);
+    if (kiteScale < 0.3f) kiteScale = 0.3f;
+    if (kiteScale > 2.5f) kiteScale = 2.5f;
+
+
+
+
 
     glutPostRedisplay();
 }
 
-// ===================== TIMER function =====================
-static void update(int)
+void handleMouse(int button, int, int, int) // adjust boat-1 speed
 {
-    // clouds
-    moveC += 0.15f;
-    if(moveC > 36.0f) moveC = -38.0f;
-
-    // boat
-    moveB1 += speedBoat1;
-    if(moveB1 > 38.0f) moveB1 = -38.0f;
-
-    // phases
-    kitePhase  += 0.06f;
-    waterPhase += 0.12f;
-
-    // bus
-    if(busRun){
-        busS += busSpeed;
-        if(busS > 1.02f) busS = 0.0f;
-    }
-
+    if (button == GLUT_LEFT_BUTTON)
+        speed -= 2.0f;
+    else if (button == GLUT_RIGHT_BUTTON)
+    speed += 2.0f;
     glutPostRedisplay();
-    glutTimerFunc(16, update, 0);
 }
 
-// ===================== reshape (your style, but world-range aware) =====================
-static void reshape(GLsizei width, GLsizei height)
-{
-    if (height == 0) height = 1;
-    GLfloat aspect = (GLfloat)width / (GLfloat)height;
-
-    glViewport(0, 0, width, height);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-
-    // keep the full world visible, add extra margin depending on window aspect
-    float baseW = (XMAX - XMIN);
-    float baseH = (YMAX - YMIN);
-    float baseAspect = baseW / baseH;
-
-    float midX = (XMIN + XMAX) * 0.5f;
-    float midY = (YMIN + YMAX) * 0.5f;
-
-    float halfW = baseW * 0.5f;
-    float halfH = baseH * 0.5f;
-
-    if (aspect >= baseAspect) {
-        // window is wider -> expand X
-        float newHalfW = halfH * aspect;
-        gluOrtho2D(midX - newHalfW, midX + newHalfW, midY - halfH, midY + halfH);
-    } else {
-        // window is taller -> expand Y
-        float newHalfH = halfW / aspect;
-        gluOrtho2D(midX - halfW, midX + halfW, midY - newHalfH, midY + newHalfH);
+// --------------------------- GLUT BOILERPLATE -------------------------------
+void display()
+{ DrawAllComponents();
+glFlush();
+}
+void init()    {
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     }
 
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-}
-
-// ===================== main =====================
 int main(int argc, char** argv)
 {
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB);
     glutInitWindowSize(1300, 700);
-    glutInitWindowPosition(50, 50);
-    glutCreateWindow("Village Scenery - Functions + Timer + PushPop + Axes");
+    glutCreateWindow(" Village Scenery ");
+    init();
 
-    initGL();
+    // timers
+    glutTimerFunc(20, updateC,   1);
+    glutTimerFunc(20, updateB1,  0);
+    glutTimerFunc(20, updateB2,  0);
+    glutTimerFunc(16, updateW,   0);
+    glutTimerFunc(30, updateMoon,0);
+    glutTimerFunc(20, updateBirds, 0);
 
+    // input
+    glutKeyboardFunc(handleKeypress);
+    glutSpecialFunc(handleSpecialKey);
+    glutMouseFunc(handleMouse);
+
+    // display
     glutDisplayFunc(display);
-    glutReshapeFunc(reshape);
-    glutKeyboardFunc(key);
-
-    glutTimerFunc(0, update, 0);
     glutMainLoop();
     return 0;
 }
+
