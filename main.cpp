@@ -5,22 +5,22 @@
 
 
 /*=====================GLOBAL STATE======================*/
-float moveC  = 0.0f;   // cloud X offset
-float moveB1 = 0.0f;   // boat-1 X offset (left → right)
-float moveB2 = 0.0f;   // boat-2 X offset (right → left)
-float speed  = 0.8f;  // Boat-1 adjustable speed
+float moveC  = 0.0f;   
+float moveB1 = 0.0f;   
+float moveB2 = 0.0f;   
+float speed  = 0.8f;  
 
 // Ferris wheels rotation (clockwise)
 float wheelAngle1 = 0.0f;
 float wheelAngle2 = 0.0f;
-bool  wheelsRunning = true; // true = rotating
+bool  wheelsRunning = true; 
 
 // Day/Night + Moon animation
-bool  isNight      = false; // false=day, true=night
-bool  moonRising   = false; // true while moon is rising
-float moonX        = 800.0f; // near hill-4
-float moonY        = 900.0f;  // starts behind hill
-float moonTargetY  = 900.0f;  // final height
+bool  isNight      = false; 
+bool  moonRising   = false;
+float moonX        = 800.0f; 
+float moonY        = 900.0f;  
+float moonTargetY  = 900.0f;  
 float kiteX = 200.0f;
 float kiteY = 1.0f;
 float kiteScale = 1.0f;
@@ -193,12 +193,12 @@ void drawTreeCloudTop(float x, float y, float scale)
     glEnd();
 }
 /*===================universal circle func=====================*/
-void drawCircle(float cx, float cy, float r, int seg = 120)
+void drawCircle(float cx, float cy, float r, int x = 120)
 {
     glBegin(GL_TRIANGLE_FAN);
         glVertex2f(cx, cy);
-        for (int i = 0; i <= seg; i++) {
-            float a = 2.0f * 3.1415926f * i / seg;
+        for (int i = 0; i <= x; i++) {
+            float a = 2.0f * 3.1415926f * i / x;
             glVertex2f(cx + r * cosf(a), cy + r * sinf(a));
         }
     glEnd();
@@ -296,7 +296,6 @@ void ferrisWheel2(float moveX, float moveY)
         glColor3ub(0,255,0);
         glVertex2f(320, -340);
         glVertex2f(680, -340);
-       // glColor3ub(90,90,96);
         glVertex2f(680, -310);
         glVertex2f(320, -310);
     glEnd();
@@ -440,14 +439,14 @@ for (int i = 0; i < 9; i++) {
     float right = left + x;
 
     if (i % 2 == 0)
-        glColor3f(1.00f, 1.00f, 0.60f);   // pink-ish
+        glColor3f(1.00f, 1.00f, 0.60f);  
     else
-        glColor3f(1.00f, 0.40f, 0.00f);   // orange-ish
+        glColor3f(1.00f, 0.40f, 0.00f);  
 
     glBegin(GL_TRIANGLES);
-        glVertex2f(0.00f, 3.00f);   // apex (top)
-        glVertex2f(left,  2.30f);   // base left
-        glVertex2f(right, 2.30f);   // base right
+        glVertex2f(0.00f, 3.00f);  
+        glVertex2f(left,  2.30f);  
+        glVertex2f(right, 2.30f);  
     glEnd();
 }
 
@@ -486,7 +485,7 @@ for (int i = 0; i < 9; i++) {
         glColor3f(0.20f, 0.70f, 0.90f);
 
         glBegin(GL_TRIANGLES);
-            glVertex2f(bx,         1.30f);
+            glVertex2f(bx, 1.30f);
             glVertex2f(bx + 0.18f, 1.30f);
             glVertex2f(bx + 0.09f, 1.05f);
         glEnd();
@@ -520,17 +519,17 @@ for (int i = 0; i < n; i++) {
 
     // SAME triangle, just expressed with left/mid/right
     glBegin(GL_TRIANGLES);
-        glVertex2f(left,  1.30f);  // base left
-        glVertex2f(right, 1.30f);  // base right
-        glVertex2f(mid,   1.10f);  // apex (down)
+        glVertex2f(left,  1.30f); 
+        glVertex2f(right, 1.30f);  
+        glVertex2f(mid,   1.10f);  
     glEnd();
 }
 
 
     // merchandise blocks
 float start1 = -1.70f;
-float step   = 0.85f;   // start-to-start distance
-float w1      = 0.60f;   // block width
+float step   = 0.85f;   
+float w1      = 0.60f;   
 
 for (int i = 0; i < 4; ++i)
 {
@@ -1547,8 +1546,8 @@ void drawBirdV(float x, float y, float s)
     glTranslatef(x+200, y+200, 0.0f);
     glScalef(s, s, 1.0f);
 
-    if (!isNight) glColor3ub(25,25,25);     // day: dark silhouette
-    else          glColor3ub(210,210,220);  // night: light gray
+    if (!isNight) glColor3ub(25,25,25);     
+    else          glColor3ub(210,210,220);  
 
     glLineWidth(2.0f);
     glBegin(GL_LINES);
@@ -1783,14 +1782,14 @@ if (!isNight) {
     glColor3ub(220,40,50);
 
     // right half
-    glVertex2f((640 + kiteX) * kiteScale, (900) * kiteScale + kiteY);  // top
-    glVertex2f((670 + kiteX) * kiteScale, (870) * kiteScale + kiteY);  // right
-    glVertex2f((640 + kiteX) * kiteScale, (840) * kiteScale + kiteY);  // bottom
+    glVertex2f((640 + kiteX) * kiteScale, (900) * kiteScale + kiteY);  
+    glVertex2f((670 + kiteX) * kiteScale, (870) * kiteScale + kiteY);  
+    glVertex2f((640 + kiteX) * kiteScale, (840) * kiteScale + kiteY);  
 
     // left half
-    glVertex2f((640 + kiteX) * kiteScale, (840) * kiteScale + kiteY);  // bottom
-    glVertex2f((610 + kiteX) * kiteScale, (870) * kiteScale + kiteY);  // left
-    glVertex2f((640 + kiteX) * kiteScale, (900) * kiteScale + kiteY);  // top
+    glVertex2f((640 + kiteX) * kiteScale, (840) * kiteScale + kiteY);  
+    glVertex2f((610 + kiteX) * kiteScale, (870) * kiteScale + kiteY);  
+    glVertex2f((640 + kiteX) * kiteScale, (900) * kiteScale + kiteY);  
 glEnd();
 
 // cross
@@ -1951,10 +1950,10 @@ glEnd();
 glColor3ub(70, 70, 85);
 
 glBegin(GL_QUADS);   // Quad 3
-    glVertex2f(-1005.0f, -500.0f); // 3
-    glVertex2f(   90.0f, -100.0f); // 2
-    glVertex2f(   27.5f,  110.0f); // 1
-    glVertex2f(-1005.5f, -250.0f); // 4
+    glVertex2f(-1005.0f, -500.0f); 
+    glVertex2f(   90.0f, -100.0f); 
+    glVertex2f(   27.5f,  110.0f); 
+    glVertex2f(-1005.5f, -250.0f); 
 glEnd();
 
 
@@ -2018,9 +2017,6 @@ for (int i = 0; i < dashes; ++i)
         glVertex2f(x1, y1);
     glEnd();
 }
-
-
-
 
 
 
@@ -3287,7 +3283,7 @@ void handleSpecialKey(int key, int, int)
 
     glutPostRedisplay();
 }
-//// adjust boat-1 speed
+// adjust boat-1 speed
 void handleMouse(int button, int, int, int)
 {
     if (button == GLUT_LEFT_BUTTON)
@@ -3334,5 +3330,6 @@ int main(int argc, char** argv)
     glutMainLoop();
     return 0;
 }
+
 
 
